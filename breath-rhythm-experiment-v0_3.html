@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Breath Rhythm Experiment v0.3</title>
+<style>
+  html, body {
+    margin: 0; padding: 0;
+    width: 100%; height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+    position: fixed;
+    touch-action: none;
+    background: #101010;
+    font-family: -apple-system, sans-serif;
+    -webkit-touch-callout: none;
+    user-select: none;
+  }
+  #stage {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.05s linear; /* hard switch, not a fade — kept near-instant on purpose */
+  }
+  #stage.inhale { background-color: #bfe3ff; } /* light blue */
+  #stage.exhale { background-color: #3a1550; } /* dark purple */
+  #breathCount {
+    font-size: 34vw;
+    font-weight: 700;
+    color: rgba(0,0,0,0.75);
+    transform: scaleY(1.9); /* stretched to read from a steep looking-up angle */
+    line-height: 1;
+    letter-spacing: -0.02em;
+  }
+  #stage.exhale #breathCount { color: rgba(255,255,255,0.85); }
+  #startOverlay {
+    position: fixed;
+    inset: 0;
+    background: #05070d;
+    color: rgba(220,225,255,0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 16px;
+    z-index: 10;
+    text-align: center;
+    padding: 24px;
+    box-sizing: border-box;
+  }
+  #startOverlay button {
+    background: rgba(255,255,255,0.1);
+    border: 1px solid rgba(255,255,255,0.3);
+    color: #fff;
+    font-size: 18px;
+    padding: 14px 28px;
+    border-radius: 12px;
+  }
+  #debug {
+    position: fixed;
+    top: 8px;
+    left: 8px;
+    font-size: 11px;
+    font-family: monospace;
+    color: rgba(0,0,0,0.55);
+    white-space: pre;
+    z-index: 5;
+    pointer-events: none;
+  }
+  #stage.exhale ~ #debug, .exhale #debug { color: rgba(255,255,255,0.55); }
+</style>
+</head>
+<body>
+
+<div id="startOverlay">
+  <div>Place the phone screen-up on your belly.</div>
+  <div style="font-size:13px; opacity:0.6;">Needs motion sensor + sound permission.</div>
+  <button id="startBtn">Start</button>
+</div>
+
+<div id="stage">
+  <div id="breathCount">0</div>
+</div>
+<div id="debug"></div>
+
+<script>
+// ================= TUNABLE PARAMETERS (adjust these while testing) =================
+const FAST_TAU_S = 0.6;   // fast smoothing — kills sensor jitter, still tracks real breathing speed
+const SLOW_TAU_S = 12;    // slow smoothing — adaptive "neutral middle", drifts with posture changes
+const VAR_TAU_S = 8;      // how quickly the per-axis "how much is this axis moving lately" estimate adapts
+const HYSTERESIS_DEG = 0.5; // how far the combined signal must be from zero to flip state
+
+// ================= STATE =================
+// Both tilt axes are tracked in parallel — beta (front-back) and gamma (left-right). Depending on
+// exactly where the phone sits on the belly, one or the other often carries a clearer breathing
+// signal. Rather than requiring perfect placement, we weight each axis automatically by how much
+// it has actually been moving recently (a running variance estimate) and trust the noisier-but-
+// bigger-swinging axis more.
+let fastEMA = { beta: null, gamma: null };
+let slowEMA = { beta: null, gamma: null };
+let varEMA = { beta: 0, gamma: 0 }; // running estimate of each axis's recent signal amplitude^2
+let lastSampleTime = null;
+let breathState = null; // 'in' | 'out' | null
+let breathCount = 0;
+let audioCtx = null;
+
+const stageEl = document.getElementById('stage');
+const countEl = document.getElementById('breathCount');
+const debugEl = document.getElementById('debug');
+
+function ensureAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (audioCtx.state === 'suspended') {
+    audioCtx.resume().catch(() => {});
+  }
+}
+
+function playTone(freqStart, freqEnd, duration, peakGain) {
+  if (!audioCtx) return;
+  const osc = audioCtx.createOscillator();
+  osc.type = 'sine';
+  const g = audioCtx.createGain();
+  g.gain.value = 0;
+  osc.connect(g);
+  g.connect(audioCtx.destination);
+  const t0 = audioCtx.currentTime;
+  osc.frequency.setValueAtTime(freqStart, t0);
+  osc.frequency.linearRampToValueAtTime(freqEnd, t0 + duration);
+  g.gain.linearRampToValueAtTime(peakGain, t0 + 0.06);
+  g.gain.linearRampToValueAtTime(0, t0 + duration);
+  osc.start(t0);
+  osc.stop(t0 + duration + 0.05);
+}
+
+function playInhaleSound() { playTone(320, 520, 0.55, 0.16); } // rising tone
+function playExhaleSound() { playTone(480, 250, 0.65, 0.14); } // falling tone
+
+function updateUI() {
+  stageEl.classList.toggle('inhale', breathState === 'in');
+  stageEl.classList.toggle('exhale', breathState === 'out');
+  countEl.textContent = String(breathCount);
+}
+
+// Beta (front-back tilt, along the phone's longer dimension) shows roughly half the angular
+// range of gamma (left-right tilt, along the shorter dimension) for the same physical breathing
+// motion — a geometry effect, not a sensitivity setting. Without compensating for this first, the
+// variance-based weighting below would double-penalize beta: smaller diff AND smaller weight.
+// Adjust this if testing shows a different ratio than ~2x.
+const AXIS_GAIN = { beta: 2.0, gamma: 1.0 };
+
+function updateAxis(axis, raw, dt) {
+  const fastAlpha = 1 - Math.exp(-dt / FAST_TAU_S);
+  const slowAlpha = 1 - Math.exp(-dt / SLOW_TAU_S);
+  const varAlpha = 1 - Math.exp(-dt / VAR_TAU_S);
+  fastEMA[axis] = (fastEMA[axis] === null) ? raw : fastEMA[axis] + fastAlpha * (raw - fastEMA[axis]);
+  slowEMA[axis] = (slowEMA[axis] === null) ? raw : slowEMA[axis] + slowAlpha * (raw - slowEMA[axis]);
+  const diff = (fastEMA[axis] - slowEMA[axis]) * AXIS_GAIN[axis];
+  varEMA[axis] = varEMA[axis] + varAlpha * (diff * diff - varEMA[axis]);
+}
+
+function combinedDiff() {
+  if (fastEMA.beta === null || fastEMA.gamma === null) return 0;
+  const diffBeta = (fastEMA.beta - slowEMA.beta) * AXIS_GAIN.beta;
+  const diffGamma = (fastEMA.gamma - slowEMA.gamma) * AXIS_GAIN.gamma;
+  const total = varEMA.beta + varEMA.gamma + 0.0001; // epsilon avoids divide-by-zero before any movement
+  const wBeta = varEMA.beta / total;
+  const wGamma = varEMA.gamma / total;
+  return wBeta * diffBeta + wGamma * diffGamma;
+}
+
+function checkState(diff) {
+  if (diff > HYSTERESIS_DEG) {
+    if (breathState !== 'in') {
+      breathState = 'in';
+      breathCount++;
+      playInhaleSound();
+      updateUI();
+    }
+  } else if (diff < -HYSTERESIS_DEG) {
+    if (breathState !== 'out') {
+      breathState = 'out';
+      playExhaleSound();
+      updateUI();
+    }
+  }
+}
+
+function onOrientation(e) {
+  if (e.beta === null || e.beta === undefined || e.gamma === null || e.gamma === undefined) return;
+  const now = performance.now();
+  const dt = lastSampleTime ? Math.min(0.5, (now - lastSampleTime) / 1000) : 0.02;
+  lastSampleTime = now;
+  updateAxis('beta', e.beta, dt);
+  updateAxis('gamma', e.gamma, dt);
+  const diff = combinedDiff();
+  checkState(diff);
+
+  const total = varEMA.beta + varEMA.gamma + 0.0001;
+  const wBeta = (varEMA.beta / total * 100).toFixed(0);
+  const wGamma = (varEMA.gamma / total * 100).toFixed(0);
+  const gainedDiffBeta = (fastEMA.beta - slowEMA.beta) * AXIS_GAIN.beta;
+  const gainedDiffGamma = (fastEMA.gamma - slowEMA.gamma) * AXIS_GAIN.gamma;
+  debugEl.textContent =
+    'beta: ' + e.beta.toFixed(2) + '  gained diff: ' + gainedDiffBeta.toFixed(2) + '  (weight ' + wBeta + '%)\n' +
+    'gamma: ' + e.gamma.toFixed(2) + '  gained diff: ' + gainedDiffGamma.toFixed(2) + '  (weight ' + wGamma + '%)\n' +
+    'combined diff: ' + diff.toFixed(2) + '  (threshold \u00b1' + HYSTERESIS_DEG + ')\n' +
+    'state: ' + (breathState || 'detecting...');
+}
+
+function attachOrientation() {
+  window.addEventListener('deviceorientation', onOrientation);
+}
+
+let wakeLock = null;
+async function requestWakeLock() {
+  try {
+    if ('wakeLock' in navigator) {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    }
+  } catch (e) {
+    // non-fatal — screen may just dim after a while if unsupported, sensors/audio still recover via visibilitychange below
+    console.warn('Wake Lock not available:', e);
+  }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+    if (wakeLock === null) requestWakeLock();
+  }
+});
+
+document.getElementById('startBtn').addEventListener('click', () => {
+  ensureAudio();
+  requestWakeLock();
+
+  const DOE = window.DeviceOrientationEvent;
+  if (DOE && typeof DOE.requestPermission === 'function') {
+    DOE.requestPermission().then((state) => {
+      if (state === 'granted') attachOrientation();
+      else debugEl.textContent = 'Motion permission denied.';
+    }).catch((err) => {
+      debugEl.textContent = 'Permission request failed: ' + err;
+    });
+  } else {
+    attachOrientation();
+  }
+
+  document.getElementById('startOverlay').style.display = 'none';
+});
+</script>
+</body>
+</html>
