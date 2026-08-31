@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Baby Cloud — Visual Prototype v0.5</title>
+<style>
+  html, body { margin: 0; padding: 0; overflow: hidden; background: #170a08; }
+  canvas { display: block; touch-action: none; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let W, H;
+function resize() { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; }
+resize();
+window.addEventListener('resize', resize);
+
+// ================= GEOMETRY =================
+// Sphere and disk share the exact same center point and the exact same rotation axis (the N-S
+// polar axis). "tilt" is the single shared squash factor that represents our oblique viewing
+// angle — it's applied identically to the sphere's surface projection AND the disk/rings, which
+// is what makes them read as one coherent 3D object instead of two unrelated flat shapes.
+const centerX = () => W / 2;
+const centerY = () => H / 2;
+const sphereRadius = 42;
+const diskInnerRadius = sphereRadius * 1.25; // soft blend zone starts here, not a hard Saturn-style gap
+const diskOuterRadius = sphereRadius * 4.2;
+const ellipsoidRadius = (sphereRadius + diskOuterRadius) / 2; // the halo's own radius — no longer tied to the spiral-arm extent
+const INCLINATION_DEG = 75; // real astronomical term: 0deg=face-on/pole-on circle, 90deg=edge-on line
+const inclinationRad = INCLINATION_DEG * Math.PI / 180;
+const tilt = Math.cos(inclinationRad);       // squashes the disk-plane (x/y) extent
+const heightFactor = Math.sin(inclinationRad); // how much out-of-plane height (z) shows up as vertical screen offset
+
+let rotationAngle = 0;
+const rotationSpeed = -0.00035; // reversed direction, per feedback — negative sign is now the only difference
+
+// A handful of fixed surface patches (longitude, latitude, hue) — this is the "asymmetry" that
+// only becomes visible as the object rotates, exactly as requested.
+// Fixed speckle points for the ellipsoid's cloud-like base texture — generated once, then rotate
+// rigidly with the disk (not regenerated every frame, so they read as real fixed structure).
+const specklePoints = [];
+for (let i = 0; i < 40; i++) {
+  specklePoints.push({
+    angle: Math.random() * Math.PI * 2,
+    r: sphereRadius + Math.random() * (ellipsoidRadius - sphereRadius),
+    size: 0.8 + Math.random() * 1.8,
+    gold: Math.random() < 0.35
+  });
+}
+
+// Sphere speckles — same visual language as the ellipsoid's, now pushed much higher in count and
+// biased toward the visible limb (edge) rather than uniformly spread, since the center is now a
+// plain bright core instead of speckled.
+const sphereSpeckles = [];
+while (sphereSpeckles.length < 400) {
+  const lon = Math.random() * Math.PI * 2;
+  const lat = (Math.random() - 0.5) * Math.PI * 0.9;
+  // reject samples too close to the sphere's own "face-on" center — biases the population toward
+  // the outer rim as seen in projection, without needing a real limb-darkening calculation
+  const centerCloseness = Math.abs(Math.cos(lat)) * Math.abs(Math.cos(lon));
+  if (Math.random() < centerCloseness * 0.8) continue;
+  sphereSpeckles.push({ lon, lat, size: 0.6 + Math.random() * 1.5, gold: Math.random() < 0.35 });
+}
+
+// Two spiral arms, 180 degrees apart — logarithmic spiral, like a (non-flat) mini spiral galaxy.
+const SPIRAL_ARMS = [0, Math.PI];
+const SPIRAL_K = 0.22; // pitch of the spiral — how tightly it winds
+
+function spiralRadiusAtAngle(armOffset, thetaRel) {
+  // r grows outward as thetaRel increases — material spirals INWARD as it loses angle over time
+  return diskInnerRadius * Math.exp(SPIRAL_K * thetaRel);
+}
+function spiralAngleAtRadius(r) {
+  return Math.log(Math.max(1, r / diskInnerRadius)) / SPIRAL_K;
+}
+
+// ================= SPHERE (real, if simplified, 3D projection) =================
+function project(lon, lat) {
+  const angle = lon + rotationAngle;
+  const x = Math.cos(lat) * Math.cos(angle);
+  const y = Math.sin(lat);
+  const z = Math.cos(lat) * Math.sin(angle);
+  return { x, y, z };
+}
+
+function drawSoftEdgeBase(cx, cy, radiusX, radiusY) {
+  // shared soft-edge technique (a gradient, not a real blur filter — cheap and consistent everywhere)
+  // used by the ellipsoid and the spiral-arm clumps
+  ctx.save();
+  ctx.globalAlpha = 0.4;
+  const grad = ctx.createRadialGradient(cx, cy, radiusX * 0.55, cx, cy, radiusX);
+  grad.addColorStop(0, '#000');
+  grad.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, radiusX, radiusY, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawSphere() {
+  const cx = centerX(), cy = centerY();
+
+  // bright white core, fading softly toward the edge — its own gradient, distinct from the
+  // ellipsoid's black base, since only the sphere gets the "white center" treatment
+  const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, sphereRadius);
+  grad.addColorStop(0, 'rgba(255,255,255,0.9)');
+  grad.addColorStop(0.5, 'rgba(255,250,240,0.5)');
+  grad.addColorStop(1, 'rgba(255,245,230,0)');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, sphereRadius, sphereRadius * tilt, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // rotating speckles — only visible on the front-facing hemisphere (z > 0), sized/brightened
+  // by how directly they face the viewer; same white/gold palette as the ellipsoid's speckles
+  const visible = sphereSpeckles
+    .map(p => ({ ...p, proj: project(p.lon, p.lat) }))
+    .filter(p => p.proj.z > -0.05)
+    .sort((a, b) => a.proj.z - b.proj.z);
+
+  for (const p of visible) {
+    const sx = cx + p.proj.x * sphereRadius;
+    const sy = cy + p.proj.y * sphereRadius * tilt;
+    const shade = Math.max(0.2, p.proj.z);
+    ctx.fillStyle = p.gold
+      ? `hsla(45, 80%, 70%, ${0.9 * shade})`
+      : `hsla(0, 0%, 95%, ${0.85 * shade})`;
+    ctx.beginPath();
+    ctx.arc(sx, sy, p.size * (0.6 + shade * 0.4), 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+// ================= DISK + SPIRAL ARMS =================
+function drawDisk(now) {
+  const cx = centerX(), cy = centerY();
+
+  // ellipsoid halo — own radius now (no longer tied to the spiral-arm extent), soft edge like the sphere
+  drawSoftEdgeBase(cx, cy, ellipsoidRadius, ellipsoidRadius * tilt);
+
+  // fixed speckle points (white/gold), rotating with the disk — at least 30, per feedback
+  ctx.save();
+  ctx.globalAlpha = 0.4;
+  for (const sp of specklePoints) {
+    const angle = sp.angle + rotationAngle;
+    const sx = cx + Math.cos(angle) * sp.r;
+    const sy = cy + Math.sin(angle) * sp.r * tilt;
+    ctx.fillStyle = sp.gold ? 'hsla(45, 80%, 70%, 0.9)' : 'hsla(0, 0%, 95%, 0.85)';
+    ctx.beginPath();
+    ctx.arc(sx, sy, sp.size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // the spiral arms — each position along the spiral is now a small, flattened clump of white/gold
+  // speckles (matching the sphere/ellipsoid style) instead of a single blue dot. The clump's own
+  // vertical squash (independent of the shared "tilt") keeps it looking like it lies IN the
+  // equatorial plane — noticeably flattened, but not paper-thin.
+  const ARM_CLUMP_FLATNESS = 0.35;
+  for (const armOffset of SPIRAL_ARMS) {
+    const steps = 90;
+    const maxTheta = spiralAngleAtRadius(diskOuterRadius);
+    for (let i = 0; i <= steps; i++) {
+      const thetaRel = (i / steps) * maxTheta;
+      const r = spiralRadiusAtAngle(armOffset, thetaRel);
+      if (r > diskOuterRadius) break;
+      const outwardness = (r - diskInnerRadius) / (diskOuterRadius - diskInnerRadius); // 0 near center, 1 at edge
+      const skipChance = outwardness * 0.85; // increasingly likely to skip a point further out
+      if (Math.random() < skipChance) continue;
+      const angle = armOffset + thetaRel + rotationAngle;
+      const cx2 = cx + Math.cos(angle) * r;
+      const cy2 = cy + Math.sin(angle) * r * tilt;
+      const clumpSize = sphereRadius * (0.36 - outwardness * 0.35); // center-to-edge spread more than tripled per feedback
+      const speckleCount = 3 + Math.floor(Math.random() * 3);
+      for (let s = 0; s < speckleCount; s++) {
+        const off = clumpSize * 0.7;
+        const sx = cx2 + (Math.random() - 0.5) * off;
+        const sy = cy2 + (Math.random() - 0.5) * off * ARM_CLUMP_FLATNESS;
+        const gold = Math.random() < 0.35;
+        ctx.fillStyle = gold ? 'hsla(45, 80%, 70%, 0.85)' : 'hsla(0, 0%, 95%, 0.8)';
+        ctx.beginPath();
+        ctx.arc(sx, sy, Math.max(0.5, clumpSize * 0.22), 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+
+  // absorption flashes — brief bright pulses exactly where an atom just spiraled in
+  for (let i = flashes.length - 1; i >= 0; i--) {
+    const f = flashes[i];
+    const age = now - f.born;
+    if (age > 500) { flashes.splice(i, 1); continue; }
+    const t = age / 500;
+    const sx = cx + Math.cos(f.angle) * f.radius;
+    const sy = cy + Math.sin(f.angle) * f.radius * tilt;
+    const g = ctx.createRadialGradient(sx, sy, 0, sx, sy, sphereRadius * 0.6 * (1 + t));
+    g.addColorStop(0, `hsla(45, 100%, 85%, ${0.8 * (1 - t)})`);
+    g.addColorStop(1, 'hsla(45, 100%, 60%, 0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(sx, sy, sphereRadius * 0.6 * (1 + t), 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+// ================= ATOMS (spawner reused from Drift, auto-homing for this visual-only test) =================
+const SPAWN_ORIGIN = { x: 0.08, y: 0.1 };
+let particles = [];
+let flashes = [];
+let frameCount = 0;
+
+// ================= REAL 3D GRAVITY (with a strong, separate vertical damping) =================
+// Position/velocity are tracked in a real 3D coordinate system: x,y are in the disk's rotation
+// plane, z is height above/below it. Gravity is genuine inverse-square, pulling toward the origin
+// in all three dimensions — the "falls in slow, then dramatically speeds up near the center" arc
+// is a natural consequence of this, not a hand-scripted easing curve.
+//
+// Vertical damping is a SEPARATE, much stronger effect applied only to vz — real accretion disks
+// damp out-of-plane motion far faster than they damp orbital (in-plane) energy, which is exactly
+// why material ends up flattened into a thin disk instead of a puffy 3D cloud. A small random
+// initial z-velocity is what gives each atom something to actually damp out over several passes.
+const G_EFF = 2600;           // tuned for a visually readable multi-pass infall at our screen scale
+const VZ_DAMPING = 0.9825;    // loss fraction halved (was 0.965 = 3.5% loss/substep, now 1.75%) — atoms should now visibly linger
+const ORBIT_DAMPING = 0.99975; // loss fraction halved (was 0.9995 = 0.05% loss/substep, now 0.025%)
+const PHYSICS_SUBSTEPS = 8;   // real gravity at this strength needs finer steps than one-per-frame to stay stable
+
+function spawnAtom() {
+  const x = W * SPAWN_ORIGIN.x - centerX();
+  const y = H * SPAWN_ORIGIN.y - centerY();
+  const r = Math.hypot(x, y) || 1;
+  // tangential direction = radial direction rotated 90 degrees — this is what actually gives
+  // angular momentum, regardless of where the spawner happens to sit relative to the center
+  const tangentX = -y / r, tangentY = x / r;
+  const vCircular = Math.sqrt(G_EFF / r); // the speed a stable circular orbit would need at this radius
+  const tangentialSpeed = vCircular * (0.75 + Math.random() * 0.15); // a bit under circular — spirals in gradually instead of holding a stable orbit forever
+  const inwardSpeed = 0.02 + Math.random() * 0.02;    // small — just enough to eventually fall inward at all
+  particles.push({
+    x, y,
+    z: (Math.random() - 0.5) * 20, // small initial out-of-plane offset — without this there's nothing to damp
+    vx: tangentX * tangentialSpeed - (x / r) * inwardSpeed,
+    vy: tangentY * tangentialSpeed - (y / r) * inwardSpeed,
+    vz: (Math.random() - 0.5) * 0.15,
+    phase: 'orbit3d',
+    angle: 0,
+    radius: 0
+  });
+}
+
+function updateAtoms(dt) {
+  const cx = centerX(), cy = centerY();
+  const subDt = dt / PHYSICS_SUBSTEPS;
+
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    if (p.phase !== 'orbit3d') continue;
+
+    for (let s = 0; s < PHYSICS_SUBSTEPS; s++) {
+      const r = Math.max(6, Math.hypot(p.x, p.y, p.z));
+      const a = G_EFF / (r * r);
+      p.vx += -(p.x / r) * a * (subDt / 16);
+      p.vy += -(p.y / r) * a * (subDt / 16);
+      p.vz += -(p.z / r) * a * (subDt / 16);
+      p.vz *= VZ_DAMPING;                    // strong: flattens into the plane over a few passes
+      p.vx *= ORBIT_DAMPING; p.vy *= ORBIT_DAMPING; // gentle: many orbits before real capture
+      p.x += p.vx * (subDt / 16);
+      p.y += p.vy * (subDt / 16);
+      p.z += p.vz * (subDt / 16);
+    }
+
+    const r3 = Math.hypot(p.x, p.y, p.z);
+    if (r3 < diskInnerRadius * 1.3 && Math.abs(p.z) < diskInnerRadius * 0.15) {
+      // close enough and flat enough — hand off to the spiral-arm snap for the final visual approach
+      p.angle = Math.atan2(p.y, p.x / tilt) - rotationAngle;
+      p.radius = r3;
+      p.phase = 'spiral';
+    }
+  }
+
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    if (p.phase !== 'spiral') continue;
+    const armTheta = spiralAngleAtRadius(p.radius);
+    let bestArm = SPIRAL_ARMS[0], bestDiff = Infinity;
+    for (const a of SPIRAL_ARMS) {
+      const targetAngle = a + armTheta;
+      let diff = ((p.angle - targetAngle + Math.PI) % (Math.PI * 2)) - Math.PI;
+      if (Math.abs(diff) < Math.abs(bestDiff)) { bestDiff = diff; bestArm = a; }
+    }
+    p.angle -= bestDiff * 0.08;
+    p.radius -= 0.55 * (dt / 16);
+    const angle = p.angle + rotationAngle;
+    p.x = Math.cos(angle) * p.radius;
+    p.y = Math.sin(angle) * p.radius;
+    if (p.radius < diskInnerRadius * 1.05) {
+      flashes.push({ born: performance.now(), angle, radius: p.radius });
+      particles.splice(i, 1);
+    }
+  }
+}
+
+function drawAtoms() {
+  const cx = centerX(), cy = centerY();
+  for (const p of particles) {
+    const sx = cx + p.x;
+    const sy = cy + p.y * tilt + (p.z || 0) * heightFactor; // y uses the disk-plane squash, z uses the height-visibility factor
+    const g = ctx.createRadialGradient(sx, sy, 0, sx, sy, 5);
+    g.addColorStop(0, 'hsla(0, 0%, 100%, 0.95)');
+    g.addColorStop(1, 'hsla(0, 0%, 100%, 0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(sx, sy, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.95)';
+    ctx.beginPath();
+    ctx.arc(sx, sy, 1.3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+// ================= LOOP =================
+let lastFrameTime = performance.now();
+let fpsHistory = [];
+function drawPerf(dt) {
+  fpsHistory.push(dt);
+  if (fpsHistory.length > 30) fpsHistory.shift();
+  const avgDt = fpsHistory.reduce((a, b) => a + b, 0) / fpsHistory.length;
+  const fps = avgDt > 0 ? 1000 / avgDt : 0;
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.font = '12px monospace';
+  ctx.fillText(fps.toFixed(0) + ' fps  /  ' + avgDt.toFixed(1) + ' ms', 10, 20);
+}
+
+function loop() {
+  const now = performance.now();
+  const dt = now - lastFrameTime;
+  lastFrameTime = now;
+
+  ctx.fillStyle = 'rgba(23,10,8,0.35)';
+  ctx.fillRect(0, 0, W, H);
+
+  rotationAngle += rotationSpeed * dt;
+  updateAtoms(dt);
+
+  drawDisk(now);
+  drawSphere();
+  drawAtoms();
+  drawPerf(dt);
+
+  frameCount++;
+  if (frameCount % 45 === 0) spawnAtom(); // reused spawner cadence, simplified to a fixed interval for this test
+
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
