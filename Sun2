@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Solar Arc & Vortex Flare Simulation</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #060201;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            box-shadow: 0 0 40px rgba(220, 60, 0, 0.2);
+        }
+    </style>
+</head>
+<body>
+
+<canvas id="solarEdgeCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById('solarEdgeCanvas');
+const ctx = canvas.getContext('2d');
+
+const size = 700;
+canvas.width = size;
+canvas.height = size;
+
+// Push center of Sun down/off-screen to emphasize a massive arc border segment
+const centerX = size / 2;
+const centerY = size * 1.3; 
+const sunRadius = size * 0.9; 
+
+const particles = [];
+const maxParticles = 300; // Dense pool optimized for an isolated view segment
+
+class VortexParticle {
+    constructor() {
+        this.reset();
+        this.age = Math.random() * this.maxAge; // Desynchronize lifetimes
+    }
+
+    reset() {
+        // Constrain spawning to the top visible arc segment (-65° to -115°)
+        this.baseAngle = -Math.PI/2 + (Math.random() - 0.5) * 0.7;
+        this.angle = this.baseAngle;
+        this.radius = sunRadius;
+
+        // Life variables
+        this.age = 0;
+        this.maxAge = 60 + Math.random() * 80;
+        
+        // Vortex physics parameters
+        this.maxHeight = 30 + Math.random() * 90; // Peak height of loop arch
+        this.loopDirection = Math.random() > 0.5 ? 1 : -1; // Arch left or right
+        
+        // Churning micro-turbulences
+        this.turbulenceSeed = Math.random() * 100;
+        this.turbulenceSpeed = 0.1 + Math.random() * 0.2;
+
+        // Visual traits
+        this.size = 2 + Math.random() * 8;
+        this.hue = 12 + Math.random() * 22; // Hot orange to solar red
+    }
+
+    update(tick) {
+        this.age++;
+
+        // Lifecycle ratio (0.0 to 1.0)
+        const progress = this.age / this.maxAge;
+
+        // 1. Core Vortex Arch Trajectory
+        // Sine wave forces particle up from surface and pulls it back down seamlessly
+        const currentArchHeight = Math.sin(progress * Math.PI) * this.maxHeight;
+        this.radius = sunRadius + currentArchHeight;
+
+        // 2. Magnetic Loop Drift
+        // Progressively applies lateral rotation along the sun's surface
+        const lateralDrift = progress * 0.08 * this.loopDirection;
+        
+        // 3. Turbulent Vortex Swirl (Noise simulation)
+        // High frequency ripple mimicking plasma curling around field lines
+        const swirl = Math.cos(tick * this.turbulenceSpeed + this.turbulenceSeed) * 0.007;
+
+        this.angle = this.baseAngle + lateralDrift + swirl;
+
+        if (this.age >= this.maxAge) {
+            this.reset();
+        }
+    }
+
+    draw() {
+        const progress = this.age / this.maxAge;
+        // Fade out at ends of the lifecycle
+        const alpha = Math.sin(progress * Math.PI); 
+
+        // Polar coordinates convert to 2D space canvas coordinates
+        const x = centerX + Math.cos(this.angle) * this.radius;
+        const y = centerY + Math.sin(this.angle) * this.radius;
+
+        ctx.save();
+        ctx.globalCompositeOperation = 'screen'; // Blends overlapping layers into hot white sparks
+        
+        const grad = ctx.createRadialGradient(x, y, 0, x, y, this.size);
+        grad.addColorStop(0, `hsla(${this.hue + 25}, 100%, 75%, ${alpha})`); // Incandescent plasma center
+        grad.addColorStop(0.3, `hsla(${this.hue}, 100%, 55%, ${alpha * 0.7})`);
+        grad.addColorStop(1, `hsla(0, 100%, 30%, 0)`);
+
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(x, y, this.size, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+}
+
+// Generate the targeted flare particle system
+for (let i = 0; i < maxParticles; i++) {
+    particles.push(new VortexParticle());
+}
+
+// Renders the low-detail inner core and high-detail silhouette perimeter edge
+function drawSolarPerimeter(tick) {
+    ctx.save();
+
+    // 1. Dynamic Chromosphere Glow (Corona backdrop behind the edge)
+    const coronaGrad = ctx.createRadialGradient(centerX, centerY, sunRadius - 10, centerX, centerY, sunRadius + 120);
+    coronaGrad.addColorStop(0, 'rgba(255, 60, 0, 0.4)');
+    coronaGrad.addColorStop(0.2, 'rgba(230, 30, 0, 0.2)');
+    coronaGrad.addColorStop(0.6, 'rgba(120, 10, 0, 0.05)');
+    coronaGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = coronaGrad;
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, sunRadius + 120, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 2. Low-Detail Inner Sun Mask
+    // Fast radial gradient that covers center pixel loops cleanly
+    ctx.globalCompositeOperation = 'source-over';
+    
+    // Slight shift to center fakes continuous internal convection currents
+    const pulseX = centerX + Math.cos(tick * 0.01) * 3;
+    const pulseY = centerY + Math.sin(tick * 0.015) * 3;
+
+    const bodyGrad = ctx.createRadialGradient(pulseX, pulseY, sunRadius * 0.85, centerX, centerY, sunRadius);
+    bodyGrad.addColorStop(0, '#fff6bd'); // Smooth interior center blend
+    bodyGrad.addColorStop(0.7, '#ff6200');
+    bodyGrad.addColorStop(0.95, '#b81400');
+    bodyGrad.addColorStop(1, '#3b0200'); // Sharp outer boundary edge
+
+    ctx.fillStyle = bodyGrad;
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, sunRadius, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+}
+
+let tick = 0;
+function loop() {
+    // Semi-transparent clearing background paint provides custom motion tails
+    ctx.fillStyle = 'rgba(6, 2, 1, 0.25)';
+    ctx.fillRect(0, 0, size, size);
+
+    tick++;
+
+    // 1. Process and render highly detailed vortex loops on perimeter boundaries
+    particles.forEach(p => {
+        p.update(tick);
+        p.draw();
+    });
+
+    // 2. Draw low-overhead inner sun graphic mask overhead
+    drawSolarPerimeter(tick);
+
+    requestAnimationFrame(loop);
+}
+
+loop();
+</script>
+
+</body>
+</html>
