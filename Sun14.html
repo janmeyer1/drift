@@ -1,0 +1,144 @@
+<!-- Solar Arc & Flare Simulator v15 (Kompakt & Vollständig) -->
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Solar Rim v15 - Autonome Flares Kompakt</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #030100; }
+        canvas { display: block; background: #000; width: 100vw; height: 100vh; }
+    </style>
+</head>
+<body>
+<canvas id="solarCanvas"></canvas>
+<script>
+const canvas = document.getElementById('solarCanvas');
+const ctx = canvas.getContext('2d');
+let centerX, centerY, sunRadius;
+
+function resize() {
+    const w = window.innerWidth, h = window.innerHeight;
+    canvas.width = w; canvas.height = h;
+    sunRadius = h * 1.5; 
+    centerX = w + sunRadius - 100; centerY = h / 2;
+}
+resize();
+window.addEventListener('resize', resize);
+
+const particles = [];
+let eruptionTimer = 0, isErupting = false, eruptionProgress = 0, eruptionAngle = Math.PI; 
+
+class SolarParticle {
+    constructor(type = 'standard', angleOffset = 0) {
+        this.type = type;
+        this.age = 0;
+        this.swirlSeed = Math.random() * 100;
+        
+        if (this.type === 'major') {
+            this.baseAngle = eruptionAngle + (Math.random() - 0.5) * 0.15;
+            this.maxAge = 100 + Math.random() * 60;
+            this.maxHeight = 280 + Math.random() * 220; 
+            this.grav = 1.0; this.loop = (Math.random() - 0.5) * 0.04;
+            this.size = 5 + Math.random() * 12; this.hue = 0 + Math.random() * 18; 
+        } else if (this.type === 'local') {
+            // Nutzen den übergebenen angleOffset für gezielte Mehrfach-Spawns
+            this.baseAngle = angleOffset + (Math.random() - 0.5) * 0.08; 
+            this.maxAge = 45 + Math.random() * 35;
+            this.maxHeight = 40 + Math.random() * 45; 
+            this.grav = 1.4; this.loop = (Math.random() > 0.5 ? 1 : -1) * 0.14; 
+            this.size = 2 + Math.random() * 5; this.hue = 14 + Math.random() * 18;
+        } else {
+            this.baseAngle = Math.PI + (Math.random() - 0.5) * 0.7; 
+            this.maxAge = 40 + Math.random() * 60; this.maxHeight = 25 + Math.random() * 65;
+            this.grav = 1.0; this.loop = Math.random() > 0.5 ? 1 : -1;
+            this.size = 2 + Math.random() * 6; this.hue = 10 + Math.random() * 22;
+            this.age = Math.random() * this.maxAge;
+        }
+        this.angle = this.baseAngle; this.radius = sunRadius;
+    }
+
+    update(tick) {
+        this.age++;
+        const p = this.age / this.maxAge;
+        const h = Math.sin(Math.pow(p, this.grav) * Math.PI) * this.maxHeight;
+        this.radius = sunRadius + (this.type === 'major' ? Math.sin(p * Math.PI * 0.85) * this.maxHeight : h);
+        this.angle = this.baseAngle + (p * this.loop) + Math.sin(tick * 0.08 + this.swirlSeed) * 0.006;
+        return this.age < this.maxAge;
+    }
+
+    draw() {
+        const p = this.age / this.maxAge, a = this.type === 'major' ? (1 - p) * Math.sin(p * Math.PI) : Math.sin(p * Math.PI);
+        const x = centerX + Math.cos(this.angle) * this.radius, y = centerY + Math.sin(this.angle) * this.radius;
+        if (x < -100) return;
+        ctx.save(); ctx.globalCompositeOperation = 'screen';
+        const g = ctx.createRadialGradient(x, y, 0, x, y, this.size);
+        g.addColorStop(0, this.type === 'major' ? `hsla(${this.hue + 35},100%,92%,${a})` : `hsla(${this.hue + 22},100%,75%,${a})`);
+        g.addColorStop(0.3, `hsla(${this.hue},100%,55%,${a*0.8})`); g.addColorStop(1, `hsla(0,100%,30%,0)`);
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, this.size, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+    }
+}
+
+for (let i = 0; i < 150; i++) particles.push(new SolarParticle('standard'));
+
+function drawSunSurface(tick) {
+    ctx.save();
+    const corona = ctx.createRadialGradient(centerX, centerY, sunRadius - 40, centerX, centerY, sunRadius + 400);
+    corona.addColorStop(0, 'rgba(255,45,0,0.4)'); corona.addColorStop(0.3, 'rgba(160,10,0,0.15)'); corona.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = corona; ctx.beginPath(); ctx.arc(centerX, centerY, sunRadius + 400, 0, Math.PI * 2); ctx.fill();
+
+    ctx.globalCompositeOperation = 'source-over'; ctx.fillStyle = '#1c0200'; ctx.beginPath(); ctx.arc(centerX, centerY, sunRadius, 0, Math.PI * 2); ctx.fill();
+
+    const cells = 24, start = Math.PI - 0.5, end = Math.PI + 0.5;
+    for (let i = 0; i < cells; i++) {
+        const angle = start + (end - start) * (i / cells);
+        const wave = Math.sin(tick * 0.07 + i * 1.5) * 5, shift = Math.cos(tick * 0.03 + i) * 5;
+        let mod = isErupting ? 1.2 + Math.sin(tick * 0.35 + i) * 0.9 * (1 - eruptionProgress) : 1;
+        const rad = sunRadius - 8 + (wave * mod), cx = centerX + Math.cos(angle) * rad + shift, cy = centerY + Math.sin(angle) * rad;
+        const cg = ctx.createRadialGradient(cx, cy, 1, cx, cy, 70 * mod);
+        cg.addColorStop(0, isErupting && Math.abs(angle - eruptionAngle) < 0.22 ? '#ffffff' : '#ffe552');
+        cg.addColorStop(0.45, '#ff3700'); cg.addColorStop(0.85, 'rgba(107,3,0,0.35)'); cg.addColorStop(1, 'rgba(28,2,0,0)');
+        ctx.globalCompositeOperation = 'screen'; ctx.fillStyle = cg; ctx.beginPath(); ctx.arc(cx, cy, 80 * mod, 0, Math.PI * 2); ctx.fill();
+    }
+
+    ctx.globalCompositeOperation = 'source-over';
+    const bg = ctx.createRadialGradient(centerX, centerY, sunRadius * 0.96, centerX, centerY, sunRadius);
+    bg.addColorStop(0, '#ffcc00'); bg.addColorStop(0.4, '#e62e00'); bg.addColorStop(0.88, '#730000'); bg.addColorStop(1, '#1a0100');
+    ctx.fillStyle = bg; ctx.beginPath(); ctx.arc(centerX, centerY, sunRadius, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+}
+
+let tick = 0;
+function animate() {
+    ctx.fillStyle = 'rgba(3,1,0,0.25)'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    tick++;
+
+    if (!isErupting) {
+        eruptionTimer++;
+        if (eruptionTimer >= 300) { isErupting = true; eruptionProgress = 0; eruptionAngle = Math.PI + (Math.random() - 0.5) * 0.35; }
+    } else {
+        eruptionProgress += 0.01;
+        if (eruptionProgress < 0.75) { for (let k = 0; k < 3; k++) particles.push(new SolarParticle('major')); }
+        if (eruptionProgress >= 1) { isErupting = false; eruptionTimer = 0; }
+    }
+
+    // AUTONOMES ZUFALLSSYSTEM (Schritt 3): Spontane kleine lokale Schleifen auslösen
+    if (Math.random() < 0.015) {
+        const triggers = Math.random() < 0.35 ? 2 : 1; // 35% Chance auf zwei gleichzeitig
+        for (let t = 0; t < triggers; t++) {
+            const randomAngle = Math.PI + (Math.random() - 0.5) * 0.5; // Zufälliger Ort am Rand
+            for (let k = 0; k < 30; k++) particles.push(new SolarParticle('local', randomAngle));
+        }
+    }
+
+    for (let i = particles.length - 1; i >= 0; i--) {
+        const active = particles[i].update(tick);
+        if (!active) particles.splice(i, 1); else particles[i].draw();
+    }
+
+    drawSunSurface(tick);
+    requestAnimationFrame(animate);
+}
+animate();
+</script>
+</body>
+</html>
