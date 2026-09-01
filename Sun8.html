@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Solar Rim - Absolut Stabil & Sound Synthesizer</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #030100;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            color: rgba(255, 255, 255, 0.4);
+            font-family: sans-serif;
+            user-select: none;
+        }
+        canvas {
+            display: block;
+            background: #000;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+        }
+        #audioPrompt {
+            position: relative;
+            z-index: 10;
+            /* WICHTIG: Macht den Text für Klicks unsichtbar. 
+               Der Klick fällt direkt auf das Canvas durch! */
+            pointer-events: none; 
+            text-align: center;
+            font-size: 14px;
+            letter-spacing: 2px;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 10px 20px;
+            border-radius: 20px;
+            border: 1px solid rgba(255, 60, 0, 0.2);
+        }
+    </style>
+</head>
+<body>
+
+<div id="audioPrompt">KLICKE FÜR SOUND-AKTIVIERUNG</div>
+<canvas id="solarCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById('solarCanvas');
+const ctx = canvas.getContext('2d');
+const audioPrompt = document.getElementById('audioPrompt');
+
+// --- GEOMETRIE & POSITIONIERUNG ---
+let centerX, centerY, sunRadius;
+
+function resize() {
+    // Erzwinge die echten Fenstermaße, selbst wenn der Canvas noch nicht voll gerendert ist
+    const w = window.innerWidth || document.documentElement.clientWidth;
+    const h = window.innerHeight || document.documentElement.clientHeight;
+    
+    canvas.width = w;
+    canvas.height = h;
+    
+    // Die Höhe ist unsere stabile Referenz für die Bogenkrümmung
+    sunRadius = h * 1.3; 
+    
+    // FEHLERBEHEBUNG: Der Sonnenrand wird exakt 100 Pixel weit von rechts 
+    // in den sichtbaren Bildschirm geschoben. Garantiert immer sichtbar!
+    centerX = w + sunRadius - 100; 
+    centerY = h / 2;
+}
+// Sofort ausführen und zusätzlich an das Load-Event hängen
+resize();
+window.addEventListener('resize', resize);
+window.addEventListener('load', resize);
+
+// --- NATIVE WEB AUDIO INTERFACES (SOUND-SYNTHESE) ---
+let audioCtx = null;
+let ambientGain = null;
+
+function initAudio() {
+    if (audioCtx) return;
+    
+    // Audio-Kontext initialisieren
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    
+    // Text ausblenden
+    audioPrompt.style.display = 'none';
+
+    // 1. Unterschwelliges, kosmisches Bass-Rumpeln der Sonnenoberfläche
+    const ambientOsc = audioCtx.createOscillator();
+    const ambientFilter = audioCtx.createBiquadFilter();
+    ambientGain = audioCtx.createGain();
+
+    ambientOsc.type = 'sawtooth';
+    ambientOsc.frequency.setValueAtTime(32, audioCtx.currentTime); // Tiefer Bass (C1)
+    
+    ambientFilter.type = 'lowpass';
+    ambientFilter.frequency.setValueAtTime(45, audioCtx.currentTime); // Filtert aggressive Höhen raus
+
+    ambientGain.gain.setValueAtTime(0.08, audioCtx.currentTime); 
+
+    ambientOsc.connect(ambientFilter);
+    ambientFilter.connect(ambientGain);
+    ambientGain.connect(audioCtx.destination);
+    ambientOsc.start();
+
+    // Dynamische Druck-Modulation des Hintergrundfeuers
+    setInterval(() => {
+        if (!audioCtx) return;
+        const mod = 0.05 + Math.sin(Date.now() * 0.001) * 0.02;
+        ambientGain.gain.linearRampToValueAtTime(mod, audioCtx.currentTime + 0.1);
+    }, 100);
+}
+
+// Prozedurales Plasma-Rauschen
+function playFlareSound(isMajor) {
+    if (!audioCtx) return;
+
+    const bufferSize = audioCtx.sampleRate * (isMajor ? 4.0 : 1.5); 
+    const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+        data[i] = Math.random() * 2 - 1;
+    }
+
+    const noiseNode = audioCtx.createBufferSource();
+    noiseNode.buffer = buffer;
+
+    const filter = audioCtx.createBiquadFilter();
+    filter.type = 'bandpass';
+    const gainNode = audioCtx.createGain();
+
+    if (isMajor) {
+        filter.frequency.setValueAtTime(60, audioCtx.currentTime);
+        filter.frequency.exponentialRampToValueAtTime(180, audioCtx.currentTime + 1.5);
+        filter.frequency.exponentialRampToValueAtTime(40, audioCtx.currentTime + 4.0);
+        filter.Q.setValueAtTime(3, audioCtx.currentTime);
+
+        gainNode.gain.setValueAtTime(0.0, audioCtx.currentTime);
+        gainNode.gain.linearRampToValueAtTime(0.20, audioCtx.currentTime + 0.4); 
+        gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 4.0);
+
+        // Sub-Bass-Druckwelle für den großen Ausbruch
+        const subOsc = audioCtx.createOscillator();
+        const subGain = audioCtx.createGain();
+        subOsc.frequency.setValueAtTime(40, audioCtx.currentTime);
+        subOsc.frequency.linearRampToValueAtTime(22, audioCtx.currentTime + 2.0);
+        subGain.gain.setValueAtTime(0.25, audioCtx.currentTime);
+        subGain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 2.5);
+        
+        subOsc.connect(subGain);
+        subGain.connect(audioCtx.destination);
+        subOsc.start();
+        subOsc.stop(audioCtx.currentTime + 2.5);
+    } else {
+        filter.frequency.setValueAtTime(110, audioCtx.currentTime);
+        filter.frequency.linearRampToValueAtTime(75, audioCtx.currentTime + 1.2);
+        filter.Q.setValueAtTime(1, audioCtx.currentTime);
+
+        gainNode.gain.setValueAtTime(0.04, audioCtx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 1.2);
+    }
+
+    noiseNode.connect(filter);
+    filter.connect(gainNode);
+    gainNode.connect(audioCtx.destination);
+    noiseNode.start();
+}
+
+// Klick-Event fängt nun garantiert an jeder Stelle des Bildschirms ab
+window.addEventListener('click', () => {
+    initAudio();
+    // Falls das Resize beim Laden fehlschlug, korrigieren wir es spätestens beim Klick
+    resize(); 
+});
+
+// --- PARTIKEL SYSTEM VARIABLEN ---
+const standardParticles = []; 
+const flareParticles = [];  
+const maxStandard = 200;       
+
+let globalEruptionTimer = 0;
+const globalEruptionInterval = 960; // ~16 Sekunden Taktung
+let isGlobalErupting = false;
+let globalEruptionProgress = 0;
+let globalEruptionAngle = Math.PI;
+
+class SolarParticle {
+    constructor(type) {
+        this.type = type; 
+        this.reset();
+        if(type === 'standard') this.age = Math.random() * this.maxAge;
+    }
+
+    reset() {
+        this.age = 0;
+        this.swirlSeed = Math.random() * 100;
+
+        if (this.type === 'global') {
+            this.baseAngle = globalEruptionAngle + (Math.random() - 0.5) * 0.12;
+            this.maxAge = 120 + Math.random() * 60;
+            this.maxHeight = 350 + Math.random() * 200; 
+            this.gravityPull = 0.8; 
+            this.loopDirection = (Math.random() - 0.5) * 0.02;
+            this.size = 6 + Math.random() * 14;        
+            this.hue = 0 + Math.random() * 15;          
+        } 
+        else if (this.type === 'local') {
+            this.baseAngle = Math.PI + (Math.random() - 0.5) * 0.5;
+            this.maxAge = 50 + Math.random() * 40;
+            this.maxHeight = 45 + Math.random() * 45; 
+            this.gravityPull = 1.3; // Starke Gravitationskrümmung zurück zur Sonne
+            this.loopDirection = (Math.random() > 0.5 ? 1 : -1) * 0.12; 
+            this.size = 2 + Math.random() * 6;
+            this.hue = 15 + Math.random() * 20;
+        } 
+        else {
+            this.baseAngle = Math.PI + (Math.random() - 0.5) * 0.7; 
+            this.maxAge = 30 + Math.random() * 40;
+            this.maxHeight = 15 + Math.random() * 35;   
+            this.gravityPull = 1.0;
+            this.loopDirection = Math.random() > 0.5 ? 1 : -1; 
+            this.size = 1.5 + Math.random() * 5;
+            this.hue = 12 + Math.random() * 20;         
+        }
+        
+        this.angle = this.baseAngle;
+        this.radius = sunRadius;
+    }
+
+    update(tick) {
+        this.age++;
+        const progress = this.age / this.maxAge; 
+
+        const archHeight = Math.sin(Math.pow(progress, this.gravityPull) * Math.PI) * this.maxHeight;
+        this.radius = sunRadius + archHeight;
+        this.angle = this.baseAngle + (progress * this.loopDirection) + Math.sin(tick * 0.08 + this.swirlSeed) * 0.008;
+
+        if (this.age >= this.maxAge) {
+            if (this.type === 'global' || this.type === 'local') return false; 
+            this.reset(); 
+        }
+        return true;
+    }
+
+    draw() {
+        const progress = this.age / this.maxAge;
+        const alpha = Math.sin(progress * Math.PI);
+
+        const x = centerX + Math.cos(this.angle) * this.radius;
+        const y = centerY + Math.sin(this.angle) * this.radius;
+
+        if (x < -100) return;
+
+        ctx.save();
+        ctx.globalCompositeOperation = 'screen';
+        
+        const grad = ctx.createRadialGradient(x, y, 0, x, y, this.size);
+        grad.addColorStop(0, this.type === 'global' ? `hsla(${this.hue + 35}, 100%, 94%, ${alpha})` : `hsla(${this.hue + 22}, 100%, 75%, ${alpha})`);
+        grad.addColorStop(0.3, `hsla(${this.hue}, 100%, 55%, ${alpha * 0.8})`);
+        grad.addColorStop(1, `hsla(0, 100%, 30%, 0)`);
+
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(x, y, this.size, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+}
+
+for (let i = 0; i < maxStandard; i++) {
+    standardParticles.push(new SolarParticle('standard'));
+}
+
+function drawSunSurfaceAndRim(tick) {
+    ctx.save();
+
+    // 1. KORONA
+    const corona = ctx.createRadialGradient(centerX, centerY, sunRadius - 40, centerX, centerY, sunRadius + 400);
