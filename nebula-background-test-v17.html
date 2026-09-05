@@ -1,0 +1,272 @@
+<!-- Nebula Background Prototype v0.5 — Domain Warping -->
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nebula Background Test v05</title>
+<style>
+  body { margin: 0; overflow: hidden; background: #05070d; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+  #info { position: fixed; top: 8px; left: 8px; color: rgba(200,210,255,0.5); font: 11px monospace; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="info">nebula prototype v17 — frequency doubled again (16x vs v13), tile shown 2x larger on screen</div>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let W, H;
+function resize() { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; }
+resize();
+window.addEventListener('resize', resize);
+
+// ================= CHEAP VALUE NOISE =================
+function makeGrid(size) {
+  const g = [];
+  for (let y = 0; y <= size; y++) { g.push([]); for (let x = 0; x <= size; x++) g[y].push(Math.random()); }
+  // Enforce periodicity — required for the baked image to tile seamlessly with real scrolling.
+  for (let x = 0; x <= size; x++) g[size][x] = g[0][x];
+  for (let y = 0; y <= size; y++) g[y][size] = g[y][0];
+  return g;
+}
+function sampleGrid(g, size, u, v) {
+  // Wrap into [0,1) first — essential for domain warping, which pushes sample coordinates
+  // outside the original range; without this, warped lookups would hit undefined array cells.
+  u = u - Math.floor(u); v = v - Math.floor(v);
+  const gx = u * size, gy = v * size;
+  const x0 = Math.floor(gx), y0 = Math.floor(gy);
+  const x1 = Math.min(size, x0 + 1), y1 = Math.min(size, y0 + 1);
+  const fx = gx - x0, fy = gy - y0;
+  const top = g[y0][x0] * (1 - fx) + g[y0][x1] * fx;
+  const bot = g[y1][x0] * (1 - fx) + g[y1][x1] * fx;
+  return top * (1 - fy) + bot * fy;
+}
+function makeFbmSource(octaveSizes) {
+  const grids = octaveSizes.map(makeGrid);
+  return function (u, v) {
+    let sum = 0, norm = 0, amp = 1;
+    for (let i = 0; i < grids.length; i++) { sum += sampleGrid(grids[i], octaveSizes[i], u, v) * amp; norm += amp; amp *= 0.5; }
+    return sum / norm;
+  };
+}
+// Domain warping: fbm(p + fbm(p + fbm(p))) — use one noise field to distort the sampling
+// coordinates of another, nested twice. This is what actually produces the swirling, organic
+// "gas cloud" look that plain layered noise can't — the standard technique for this exact purpose.
+function makeWarpedSource(baseOctaves, warp1Octaves, warp2Octaves, warpAmount) {
+  const base = makeFbmSource(baseOctaves);
+  const w1x = makeFbmSource(warp1Octaves), w1y = makeFbmSource(warp1Octaves.map(s => s + 3));
+  const w2x = makeFbmSource(warp2Octaves), w2y = makeFbmSource(warp2Octaves.map(s => s + 3));
+  return function (u, v) {
+    const d1x = w1x(u, v), d1y = w1y(u, v);
+    const u2 = u + d1x * warpAmount, v2 = v + d1y * warpAmount;
+    const d2x = w2x(u2, v2), d2y = w2y(u2, v2);
+    const u3 = u2 + d2x * warpAmount, v3 = v2 + d2y * warpAmount;
+    const value = base(u3, v3);
+    const distortion = Math.hypot(d1x, d1y) + Math.hypot(d2x, d2y); // total warp magnitude at this point
+    return { value, distortion };
+  };
+}
+
+// ================= LAYER BAKING =================
+function bakeLayer(bakeW, bakeH, opts) {
+  const off = document.createElement('canvas');
+  off.width = bakeW; off.height = bakeH;
+  const octx = off.getContext('2d');
+  const img = octx.createImageData(bakeW, bakeH);
+
+  const structureSrc = makeWarpedSource(opts.baseOctaves, opts.warp1Octaves, opts.warp2Octaves, opts.warpAmount);
+
+  // First pass: compute structure AND distortion fields once. Transparency threshold comes from
+  // the structure field's percentile (as before); the rare accent-color zones come from the
+  // distortion field's own percentile — the most turbulent warp transitions, which is also where
+  // real emission nebulae actually show different ionization colors at shock/transition fronts.
+  const n = bakeW * bakeH;
+  const structureField = new Float32Array(n);
+  const distortionField = new Float32Array(n);
+  for (let y = 0; y < bakeH; y++) {
+    for (let x = 0; x < bakeW; x++) {
+      const u = x / bakeW, v = y / bakeH;
+      const { value, distortion } = structureSrc(u, v);
+      const idxF = y * bakeW + x;
+      structureField[idxF] = Math.pow(value, opts.contrast);
+      distortionField[idxF] = distortion;
+    }
+  }
+  const sortedStructure = Float32Array.from(structureField).sort();
+  const transparentThreshold = sortedStructure[Math.floor(n * opts.transparentFraction)];
+  // Normalize against the REAL observed maximum, not a theoretical 1.0 that the field never
+  // actually reaches — using the theoretical bound left almost all layers (especially the near
+  // one, with its high transparentFraction) capped at a small fraction of true opacity.
+  const trueMaxStructure = sortedStructure[n - 1];
+
+  const sortedDistortion = (opts.accents && opts.accents.length) ? Float32Array.from(distortionField).sort() : null;
+  const accentBands = (opts.accents || []).map(acc => {
+    const threshold = sortedDistortion[Math.floor(n * (1 - acc.fraction))];
+    // Reference the 98.5th percentile as "full strength", not the single global maximum — using
+    // the true max meant only a hair's-breadth sliver near that one pixel ever reached visible
+    // color, making the whole accent-fraction band nearly invisible in practice.
+    const strongPoint = sortedDistortion[Math.floor(n * 0.985)];
+    const range = Math.max(0.001, strongPoint - threshold);
+    return { threshold, range, color: acc.color, sharpness: acc.sharpness };
+  });
+
+  for (let i = 0; i < n; i++) {
+    let structure = structureField[i];
+    // S-curve (smoothstep) on top of the existing power curve — pushes empty areas emptier and
+    // dense areas denser, for more contrast without adding new tunable knobs.
+    structure = structure * structure * (3 - 2 * structure);
+
+    let r = opts.baseR + structure * opts.baseRVar;
+    let gCol = opts.baseG + structure * opts.baseGVar;
+    let b = opts.baseB + structure * opts.baseBVar;
+
+    // Applied in order — later bands (narrower/sharper) sit visually "inside" earlier ones
+    // (wider/softer), giving a natural halo effect from a single shared distortion field.
+    for (const band of accentBands) {
+      const excess = Math.max(0, distortionField[i] - band.threshold);
+      const accentSharp = Math.pow(Math.min(1, excess / band.range), band.sharpness);
+      r += accentSharp * band.color[0];
+      gCol += accentSharp * band.color[1];
+      b += accentSharp * band.color[2];
+    }
+
+    const alpha = structureField[i] <= transparentThreshold ? 0 : Math.min(1, (structureField[i] - transparentThreshold) / (trueMaxStructure - transparentThreshold));
+
+    const idx = i * 4;
+    img.data[idx] = Math.max(0, Math.min(255, r));
+    img.data[idx + 1] = Math.max(0, Math.min(255, gCol));
+    img.data[idx + 2] = Math.max(0, Math.min(255, b));
+    img.data[idx + 3] = Math.round(alpha * 255);
+  }
+  octx.putImageData(img, 0, 0);
+  return off;
+}
+
+const BAKE_W = 235, BAKE_H = 417;
+const layers = [
+  { canvas: bakeLayer(BAKE_W, BAKE_H, { // far — hazier; mostly covered (20% transparent); rare sharp PURPLE accents
+      baseOctaves: [16, 32, 52], warp1Octaves: [8, 16], warp2Octaves: [12, 20], warpAmount: 0.35, contrast: 0.8,
+      baseR: 38, baseG: 6, baseB: 5, baseRVar: 90, baseGVar: 26, baseBVar: 16,
+      transparentFraction: 0.2,
+      accents: [{ color: [70, 20, 110], fraction: 0.15, sharpness: 2.2 }]
+    }), speedPxPerSec: 4, alpha: 0.9 },
+  { canvas: bakeLayer(BAKE_W, BAKE_H, { // mid — half transparent; rare sharp GREEN accents
+      baseOctaves: [12, 24, 40], warp1Octaves: [8, 20], warp2Octaves: [12, 24], warpAmount: 0.55, contrast: 0.73,
+      baseR: 20, baseG: 8, baseB: 6, baseRVar: 80, baseGVar: 36, baseBVar: 22,
+      transparentFraction: 0.5,
+      accents: [{ color: [10, 90, 55], fraction: 0.15, sharpness: 2.2 }]
+    }), speedPxPerSec: 11, alpha: 0.75 },
+  { canvas: bakeLayer(BAKE_W, BAKE_H, { // near — mostly empty (75% transparent); nested red halo + yellow core
+      baseOctaves: [8, 16, 32], warp1Octaves: [4, 12], warp2Octaves: [8, 16], warpAmount: 0.75, contrast: 0.68,
+      baseR: 10, baseG: 10, baseB: 7, baseRVar: 40, baseGVar: 42, baseBVar: 25,
+      transparentFraction: 0.6,
+      accents: [
+        { color: [95, 15, 10], fraction: 0.25, sharpness: 1.7 },
+        { color: [140, 115, 15], fraction: 0.08, sharpness: 2.6 }
+      ]
+    }), speedPxPerSec: 24, alpha: 0.55 }
+];
+
+// All layers drift at the SAME slight off-horizontal angle — a coherent single direction through
+// the nebula, not each layer wandering independently. Only speed differs (slow far, fast near).
+const DRIFT_ANGLE_DEG = 9;
+const DRIFT_ANGLE_RAD = DRIFT_ANGLE_DEG * Math.PI / 180;
+const DRIFT_DIR = { x: Math.cos(DRIFT_ANGLE_RAD), y: Math.sin(DRIFT_ANGLE_RAD) };
+
+// Seamless repeating patterns (the grid periodicity fix above is what makes this actually seamless)
+// scale each baked tile up a bit on screen so the coarse bake resolution isn't too blocky.
+const TILE_SCREEN_SIZE = 520;
+for (const layer of layers) {
+  layer.pattern = ctx.createPattern(layer.canvas, 'repeat');
+}
+
+// ================= FOURTH LAYER: fixed, unignited proto-stars =================
+// Genuinely fixed screen positions — no drift, no rotation. Red because they haven't ignited yet
+// (a real astrophysical detail: pre-ignition protostars glow cooler/redder than a lit main-sequence
+// star). A true pointed star polygon, not a plus-shaped lens-flare cross. Drawn first, so the
+// nebula layers' own per-pixel transparency naturally lets them shine through the thin patches
+// and disappear behind the denser ones.
+const STAR_COUNT = 18;
+const fixedStars = [];
+for (let i = 0; i < STAR_COUNT; i++) {
+  fixedStars.push({
+    x: Math.random() * W,
+    y: Math.random() * H,
+    size: 1.6 + Math.random() * 2.2,
+    twinklePhase: Math.random() * Math.PI * 2,
+    twinkleSpeed: 0.0012 + Math.random() * 0.0018
+  });
+}
+function drawStarShape(x, y, outerR, innerR, alpha) {
+  ctx.beginPath();
+  const spikes = 4;
+  for (let i = 0; i < spikes * 2; i++) {
+    const angle = (Math.PI / spikes) * i - Math.PI / 2;
+    const rad = i % 2 === 0 ? outerR : innerR;
+    const px = x + Math.cos(angle) * rad, py = y + Math.sin(angle) * rad;
+    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fillStyle = `rgba(255, 90, 60, ${alpha})`;
+  ctx.fill();
+}
+function drawFixedStars(t) {
+  for (const s of fixedStars) {
+    const twinkle = 0.65 + 0.35 * Math.sin(t * s.twinkleSpeed + s.twinklePhase);
+    const r = s.size * twinkle;
+    const glow = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, r * 3.2);
+    glow.addColorStop(0, `rgba(255, 60, 40, ${0.45 * twinkle})`);
+    glow.addColorStop(1, 'rgba(255, 60, 40, 0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, r * 3.2, 0, Math.PI * 2);
+    ctx.fill();
+    drawStarShape(s.x, s.y, r, r * 0.35, 0.85 * twinkle);
+  }
+}
+
+let startTime = performance.now();
+const infoEl = document.getElementById('info');
+let frameTimes = [];
+let lastFpsUpdate = 0;
+function draw() {
+  const now = performance.now();
+  const t = (now - startTime) / 1000; // seconds
+  ctx.fillStyle = '#05070d';
+  ctx.fillRect(0, 0, W, H);
+
+  drawFixedStars(now);
+
+  for (const layer of layers) {
+    const offX = DRIFT_DIR.x * layer.speedPxPerSec * t;
+    const offY = DRIFT_DIR.y * layer.speedPxPerSec * t;
+    const m = new DOMMatrix()
+      .translate(offX % TILE_SCREEN_SIZE, offY % TILE_SCREEN_SIZE)
+      .scale(TILE_SCREEN_SIZE / BAKE_W, TILE_SCREEN_SIZE / BAKE_H);
+    layer.pattern.setTransform(m);
+    ctx.globalAlpha = layer.alpha;
+    ctx.fillStyle = layer.pattern;
+    ctx.fillRect(0, 0, W, H);
+  }
+  ctx.globalAlpha = 1;
+
+  // FPS — rolling average over the last ~30 frames, display refreshed a few times per second
+  // (not every frame) so the number stays readable instead of flickering.
+  frameTimes.push(now);
+  if (frameTimes.length > 30) frameTimes.shift();
+  if (now - lastFpsUpdate > 300 && frameTimes.length > 1) {
+    const span = frameTimes[frameTimes.length - 1] - frameTimes[0];
+    const fps = span > 0 ? Math.round((frameTimes.length - 1) * 1000 / span) : 0;
+    infoEl.textContent = `FPS: ${fps}  |  nebula v16 — 4x detail density`;
+    lastFpsUpdate = now;
+  }
+
+  requestAnimationFrame(draw);
+}
+draw();
+</script>
+
+</body>
+</html>
