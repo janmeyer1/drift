@@ -1,0 +1,83 @@
+{\rtf1\ansi\ansicpg1252\deff0\deflang1033
+{\fonttbl{\f0\fswiss\fcharset0 Calibri;}{\f1\fmodern\fcharset0 Consolas;}}
+{\colortbl;\red0\green0\blue0;\red90\green90\blue90;}
+\f0\fs24
+\pard\qc\b\fs40 Drift \uc1\u8212? Konzeptpapier: Design-Entscheidungen\b0\fs24\par\par
+\pard\sa180\sl276\slmult1
+\page\b\fs34 1. Projekt-\uc1\u220?berblick & Vision\b0\fs24\par\par
+\b Drift\b0  ist ein wissenschaftlich fundiertes Incremental/Idle-Mobilspiel, umgesetzt als PWA mit reinem HTML/CSS/JavaScript, gehostet auf GitHub Pages. Entwicklung erfolgt solo auf Android mit LLM-Unterst\uc1\u252?tzung (Claude).\par
+\par
+\b Tagline:\b0  "Quiet hands. Reach of a god."\par
+\par
+Zentrales Design-Prinzip: Echte Physik ist Gestaltungsprinzip, nicht nur Deko. Orbitalmechanik, Atomstruktur, Sternz\uc1\u252?ndung \uc1\u8211? wo immer m\uc1\u246?glich, spiegelt die Spielmechanik echte physikalische Zusammenh\uc1\u228?nge wider. Abweichungen von der echten Physik (z. B. Z\uc1\u252?ndung nach Sekunden statt Jahrmillionen) sind bewusste, benannte Kompromisse f\uc1\u252?r die Spielbarkeit, keine Unachtsamkeit.\par
+\par
+Der Spieler-Beitrag wird narrativ als "der Kipp-Punkt" einer bereits im Entstehen begriffenen Wolke gerahmt \uc1\u8211? k\uc1\u252?nstlerische Freiheit, aber mit echter astrophysikalischer Rechtfertigung (Z\uc1\u252?ndung ist tats\uc1\u228?chlich ein Schwellenph\uc1\u228?nomen).\par
+\par
+\page\b\fs34 2. Begriffs-Glossar\b0\fs24\par\par
+\fi-240\li360 \bullet\tab \b Epoch\b0  \uc1\u8211? oberste kosmologische Spielebene (aktuell: Epoche 1 Elementarteilchen\uc1\u8594?Atome, Epoche 2 Atome\uc1\u8594?Sonnenz\uc1\u252?ndung)\par\pard\sa180\sl276\slmult1
+\fi-240\li360 \bullet\tab \b Cycle\b0  \uc1\u8211? ein einzelner Durchlauf innerhalb einer Epoche\par\pard\sa180\sl276\slmult1
+\fi-240\li360 \bullet\tab \b Echo\b0  \uc1\u8211? permanente Meta-W\uc1\u228?hrung, \uc1\u252?berlebt Cycle-Neustarts\par\pard\sa180\sl276\slmult1
+\fi-240\li360 \bullet\tab \b Field\b0  \uc1\u8211? der sichtbare Spielbereich (Canvas)\par\pard\sa180\sl276\slmult1
+\fi-240\li360 \bullet\tab \b RAP\b0  \uc1\u8211? Rhythm Auto-Pilot (Wisch-basierte Autopilot-Stufe)\par\pard\sa180\sl276\slmult1
+\fi-240\li360 \bullet\tab \b BAP\b0  \uc1\u8211? Breath Auto-Pilot (Neigungs-/Atem-basierte Autopilot-Stufe)\par\pard\sa180\sl276\slmult1
+\fi-240\li360 \bullet\tab \b Score vs. Echo\b0  \uc1\u8211? Score ist die laufende, epochen-interne W\uc1\u228?hrung (kauft Spawn-Stufen); Echo ist die dauerhafte Meta-W\uc1\u228?hrung (kauft permanente Echo-Shop-Verbesserungen, entsteht aus stabilisiertem Score)\par\pard\sa180\sl276\slmult1
+\par
+\page\b\fs34 3. Architektur-\uc1\u220?berblick\b0\fs24\par\par
+\b Warum eine einzelne HTML-Datei:\b0  Denkbar einfachstes Deployment auf GitHub Pages, kein Build-Prozess, kein Bundler \uc1\u8211? passt zum Solo-Entwicklungs-Kontext mit LLM-Unterst\uc1\u252?tzung, wo ein einzelner, vollst\uc1\u228?ndig sichtbarer Kontext das Arbeiten mit einem Sprachmodell erheblich erleichtert.\par
+\par
+\b Aktueller Umfang (Stand dieser Dokumentation):\b0  rund 4.000 Zeilen. Eine Sektions-Analyse hat gezeigt: Die meisten gro\uc1\u223?en Codebl\uc1\u246?cke sind gut isoliert (eigene Namens-Pr\uc1\u228?fixe, geringe Kopplung an anderen Code) \uc1\u8211? z. B. der Nebel-Hintergrund ({\f1 nebula}-Pr\uc1\u228?fix) und die Sonnen-Darstellung ({\f1 sun}-Pr\uc1\u228?fix), beide mit externem/eigenst\uc1\u228?ndigem Ursprung. Ein tats\uc1\u228?chliches Problem wurde in der "Wake Lock"-Sektion gefunden: \uc1\u220?ber die Zeit hatten sich dort ca. 300 Zeilen fachfremder Code (Breath-Autopilot-Logik) unter einer irref\uc1\u252?hrenden \uc1\u220?berschrift angesammelt \uc1\u8211? Beleg daf\uc1\u252?r, dass Abschnitts-Beschriftungen regelm\uc1\u228?\uc1\u223?ig \uc1\u252?berpr\uc1\u252?ft werden m\uc1\u252?ssen, auch ohne dass sich die Code-Struktur selbst grundlegend \uc1\u228?ndern muss.\par
+\par
+\b Kern-Game-Loop:\b0  {\f1 requestAnimationFrame}-basiert, eine zentrale {\f1 update(dtMs)}-Funktion orchestriert alle Subsysteme sequenziell (Anziehung, Bindung, epochenspezifische Physik, Zeichnen).\par
+\par
+\page\b\fs34 4. Epoche 1 \uc1\u8212? Design im Detail\b0\fs24\par\par
+\b Spawn-Katalog:\b0  Up/Down/Charm/Strange/Top/Bottom-Quarks \uc1\u8594? Quark-Bindung \uc1\u8594? Neutron \uc1\u8594? Manueller Multiplikator \uc1\u215?4 \uc1\u8594? Proton \uc1\u8594? Elektron \uc1\u8594? Epoche abschlie\uc1\u223?en (kostenlos, \uc1\u246?ffnet das Men\uc1\u252?).\par
+\par
+\b RAP (Rhythm Auto-Pilot):\b0  \uc1\u220?bernimmt beim Loslassen exakt den manuell erreichten \uc1\u215?N-Wert (kein eigener Bonus obendrauf). Tempo-Stufen je nach Wisch-Rhythmus (hektisch <250ms bis ruhig 1000ms+).\par
+\par
+\b BAP (Breath Auto-Pilot):\b0  Aktivierung durch \uc1\u215?N-Tap und Platzierung, Standby bei >45\uc1\u176? Neigung (mit Karenzzeit) oder 30s Stille, Reaktivierung durch einen best\uc1\u228?tigten Atemzug. Zeitbasierter Bonus (verdoppelt sich alle 4/8/16 Sekunden).\par
+\par
+\b Echo Shop:\b0  Permanente Verbesserungen, kaufbar mit Echo \uc1\u8211? u. a. h\uc1\u246?here RAP/BAP-Multiplikator-Obergrenzen, gr\uc1\u246?\uc1\u223?ere Partikel-Obergrenzen, Farb-Kombo-Boosts.\par
+\par
+\page\b\fs34 5. Epoche 2 \uc1\u8212? Design im Detail\b0\fs24\par\par
+\b Kernidee:\b0  Wasserstoff-Atome werden in eine "Baby-Wolke" (Protostern-Vorl\uc1\u228?ufer) eingesammelt, bis eine Z\uc1\u252?ndungs-Schwelle erreicht ist, die dann in eine vollst\uc1\u228?ndige Sonnen-Sequenz \uc1\u252?bergeht.\par
+\par
+\b Massen-System:\b0  Jedes Bindungs-Ereignis verdoppelt die Summe seiner Teile (k\uc1\u252?nstlerische Freiheit als "Bindungsenergie" gerahmt, keine echte Physik) \uc1\u8211? Einzelatom = 4, P\uc1\u228?rchen = 16, Quartett = 64, danach \uc1\u215?4 je Stufe (256, 1024, 4096, 16384). Score und Masse sind bewusst dieselbe Zahl (eine W\uc1\u228?hrung), damit F\uc1\u228?higkeits-Boni nicht versehentlich die Z\uc1\u252?ndungs-Geschwindigkeit verzerren.\par
+\par
+\b Reale 3D-Orbitalphysik:\b0  Am Trichter-Rand wird die tangentiale Geschwindigkeit neu auf einen realistischen Kreisbahn-Wert gesetzt (statt der linear ererbten Geschwindigkeit), mit weichem \uc1\u220?bergang (900ms) und leichtem Modulator aus der bestehenden horizontalen Geschwindigkeitskomponente. Vortex wirkt jetzt auch im Trichter, mit Abstands-Abschw\uc1\u228?chung zur Wolke hin.\par
+\par
+\b P\uc1\u228?rchen/Quartette:\b0  Nach mehreren Iterationen als eigenst\uc1\u228?ndige, unabh\uc1\u228?ngige Partikel-Physik umgesetzt (nicht als starre Rotation um ein Zentrum) \uc1\u8211? Vortex wirkt individuell pro Mitglied, Wolken-Schwerkraft wird einmal am Schwerpunkt berechnet und allen Mitgliedern gemeinsam \uc1\u252?bergeben (physikalisch korrekter f\uc1\u252?r ein eng gebundenes System, zus\uc1\u228?tzlich g\uc1\u252?nstiger). Eine sanfte Bindungskraft h\uc1\u228?lt die Mitglieder lose zusammen; sie d\uc1\u252?rfen sich sichtbar l\uc1\u246?sen und wiederfinden.\par
+\par
+\b Z\uc1\u252?ndungssequenz:\b0  F\uc1\u252?nf automatische, nicht-interaktive Stufen (~2s): Gr\uc1\u246?\uc1\u223?enkorrektur \uc1\u8594? Aufplatzen der Spiralarme \uc1\u8594? Aufbl\uc1\u252?hen \uc1\u8594? Wei\uc1\u223?blitz \uc1\u8594? Sonne. Die Gr\uc1\u246?\uc1\u223?enkorrektur zielt exakt auf die vorausberechnete Sonnengr\uc1\u246?\uc1\u223?e/-position; bei \uc1\u252?berwiegend rotations-getriebener Z\uc1\u252?ndung ist dieser Korrektur-Sprung sichtbar gr\uc1\u246?\uc1\u223?er (bewusst als Feedback \uc1\u252?ber den Z\uc1\u252?ndungs-Stil belassen).\par
+\par
+\b Nebel-Hintergrund:\b0  Domain-Warping-Rauschen (verschachtelte, sich selbst verzerrende fraktale Rauschmuster), drei parallaxen-artige Ebenen mit echter, pixelgenauer Transparenz (Perzentil-basiert bestimmt, nicht gesch\uc1\u228?tzt), plus eine vierte, unbewegte Ebene mit r\uc1\u246?tlich glimmenden, noch nicht gez\uc1\u252?ndeten Protosternen. Nur in Epoche 2 aktiv, einmalig beim Laden gebacken.\par
+\par
+\page\b\fs34 6. Wiederkehrende Design-Prinzipien\b0\fs24\par\par
+\fi-240\li360 \bullet\tab \b Perzentil-basierte Schwellenwerte statt gesch\uc1\u228?tzter Werte:\b0  Wiederholt hat sich gezeigt, dass gesch\uc1\u228?tzte Konstanten (z. B. Transparenz-Schwellen, Deckkraft-Normierung) empirisch falsch lagen. Die zuverl\uc1\u228?ssige L\uc1\u246?sung: den tats\uc1\u228?chlich erzeugten Wertebereich einmal berechnen, sortieren, und den Schwellenwert aus der echten Verteilung ablesen \uc1\u8211? garantiert exakte Ergebnisse unabh\uc1\u228?ngig von Formel-Eigenheiten\par\pard\sa180\sl276\slmult1
+\fi-240\li360 \bullet\tab \b Weniger UI, mehr diegetisches Feedback:\b0  Keine dauerhaften neuen HUD-Elemente; R\uc1\u252?ckmeldungen passieren im Spielfeld selbst (Farbwechsel, Ringe, Glimmen)\par\pard\sa180\sl276\slmult1
+\fi-240\li360 \bullet\tab \b Einmal teuer rechnen, oft g\uc1\u252?nstig zeichnen:\b0  Der Nebel-Hintergrund ist das Paradebeispiel \uc1\u8211? komplexe Berechnung einmalig auf eine kleine Zwischen-Leinwand, danach nur noch g\uc1\u252?nstiges Kacheln/Skalieren\par\pard\sa180\sl276\slmult1
+\fi-240\li360 \bullet\tab \b Ehrliche Fehlersuche vor Vermutung:\b0  Mehrfach hat sich gezeigt, dass eine vermutete Ursache falsch war (z. B. das Kachel-Sichtbarkeitsproblem, das eigentlich an fehlender Struktur-Gr\uc1\u246?\uc1\u223?en-Differenzierung lag, nicht an der Transparenz) \uc1\u8211? die Praxis in diesem Projekt ist, Annahmen aktiv am Code oder mit kleinen Testrechnungen zu verifizieren, bevor \uc1\u196?nderungen vorgeschlagen werden\par\pard\sa180\sl276\slmult1
+\par
+\page\b\fs34 7. UI/UX-Interaktionsstufen\b0\fs24\par\par
+Sechs Stufen f\uc1\u252?r interaktive Elemente wurden definiert (Kurznamen zur internen Diskussion):\par
+\fi-240\li360 \bullet\tab \b INERT\b0  \uc1\u8211? dauerhaft nicht-interaktiver Inhalt, keine Interaktions-Anmutung\par\pard\sa180\sl276\slmult1
+\fi-240\li360 \bullet\tab \b GHOST\b0  \uc1\u8211? interaktiv, aber unsichtbar, kein Platz reserviert (versteckte Komplexit\uc1\u228?t, z. B. der Debug-Zugang zu Epoche 2)\par\pard\sa180\sl276\slmult1
+\fi-240\li360 \bullet\tab \b TEASE\b0  \uc1\u8211? wie GHOST, aber mit reserviertem Platz als Ank\uc1\u252?ndigung\par\pard\sa180\sl276\slmult1
+\fi-240\li360 \bullet\tab \b FADED\b0  \uc1\u8211? sichtbar, grau, wenig Kontrast, nicht interaktiv (z. B. Epoche-2-Men\uc1\u252?punkt vor Abschluss von Epoche 1)\par\pard\sa180\sl276\slmult1
+\fi-240\li360 \bullet\tab \b POOR\b0  \uc1\u8211? sichtbar, grau, mehr Kontrast, aktuell nicht leistbar (Echo-Shop-Element, dessen Preis \uc1\u252?ber dem aktuellen Kontostand liegt)\par\pard\sa180\sl276\slmult1
+\fi-240\li360 \bullet\tab \b READY\b0  \uc1\u8211? voll interaktiv, farbiger durchgezogener Rand\par\pard\sa180\sl276\slmult1
+\par
+Bei der Einf\uc1\u252?hrung dieser Systematik wurde ein echter Bug im Echo-Shop gefunden und behoben: Gesperrte Elemente hatten f\uc1\u228?lschlich dieselbe CSS-Klasse wie bereits gekaufte Elemente erhalten (Kopier-Fehler), wodurch "gesperrt" optisch wie "schon besessen" aussah.\par
+\par
+\page\b\fs34 8. Bekannte offene Baustellen\b0\fs24\par\par
+\fi-240\li360 \bullet\tab Popup-Screens mit festem Schlie\uc1\u223?en-Kreuz als m\uc1\u246?gliche robustere Alternative zu den bestehenden Bottom-Sheets mit Wisch-zum-Schlie\uc1\u223?en (Gesten-Konflikt mit Scrollen) \uc1\u8211? noch nicht entschieden\par\pard\sa180\sl276\slmult1
+\fi-240\li360 \bullet\tab Seifenblasen-Optik: Gr\uc1\u246?\uc1\u223?enabh\uc1\u228?ngige Farbenvielfalt (kleine Stufen = Epoche-1-Farben, gr\uc1\u246?\uc1\u223?ere = bunter) weiterhin nicht umgesetzt; echter Linseneffekt bewusst zur\uc1\u252?ckgestellt (Performance-Bedenken bei potenziell vielen gleichzeitigen Atomen)\par\pard\sa180\sl276\slmult1
+\fi-240\li360 \bullet\tab Rotation von P\uc1\u228?rchen/Quartetten bei gr\uc1\u246?\uc1\u223?erer Struktur-Ausdehnung: aktuell \uc1\u252?ber eine schw\uc1\u228?chere Bindungskraft angen\uc1\u228?hert, nicht direkt wie urspr\uc1\u252?nglich formuliert ("Rotation langsamer") umgesetzt \uc1\u8211? R\uc1\u252?ckfrage an den Projektinhaber offen\par\pard\sa180\sl276\slmult1
+\fi-240\li360 \bullet\tab 9-Epochen-Gesamtstruktur (Quarks\uc1\u8594?Atome bis Silizium\uc1\u8594?interstellar) bisher nur als Konzept, nicht im Detail ausgearbeitet\par\pard\sa180\sl276\slmult1
+\par
+\page\b\fs34 9. Anhang \uc1\u8212? Ausgew\uc1\u228?hlte Konstanten-Referenz\b0\fs24\par\par
+\fi-240\li360 \bullet\tab {\f1 GRAVITY_STRENGTH}, {\f1 FRICTION}, {\f1 QUADRATIC_DRAG_K} \uc1\u8211? Basis-Partikelphysik, Epoche 1 und 2 gemeinsam genutzt\par\pard\sa180\sl276\slmult1
+\fi-240\li360 \bullet\tab {\f1 CLOUD_G_EFF = 2600} \uc1\u8211? effektive Gravitationskonstante f\uc1\u252?r die 3D-Orbitalphysik der Baby-Wolke\par\pard\sa180\sl276\slmult1
+\fi-240\li360 \bullet\tab {\f1 CLOUD_FUNNEL_OUTER_MULT = 4} \uc1\u8211? Trichter-Radius als Vielfaches des aktuellen Spiralarm-Au\uc1\u223?enradius\par\pard\sa180\sl276\slmult1
+\fi-240\li360 \bullet\tab {\f1 IGNITION_THRESHOLD_E2 = 5.000.000} \uc1\u8211? Z\uc1\u252?ndungs-Schwelle (Masse \uc1\u215? Rotations-Bonus)\par\pard\sa180\sl276\slmult1
+\fi-240\li360 \bullet\tab {\f1 DUO_BIND_STRENGTH = 0,012} / {\f1 QUARTET_BIND_STRENGTH = 0,007} \uc1\u8211? sanfte Bindungskr\uc1\u228?fte f\uc1\u252?r P\uc1\u228?rchen/Quartette\par\pard\sa180\sl276\slmult1
+}

@@ -1,0 +1,52 @@
+{\rtf1\ansi\ansicpg1252\deff0\deflang1033
+{\fonttbl{\f0\fswiss\fcharset0 Calibri;}{\f1\fmodern\fcharset0 Consolas;}}
+{\colortbl;\red0\green0\blue0;\red90\green90\blue90;}
+\f0\fs24
+\pard\qc\b\fs40 Drift \uc1\u8212? Lerndokument: Verwendete Code-Technologien\b0\fs24\par\par
+\pard\sa180\sl276\slmult1
+\page\b\fs34 1. Canvas-2D-Grundlagen\b0\fs24\par\par
+Drift nutzt ausschlie\uc1\u223?lich die klassische 2D-Canvas-API ({\f1 ctx = canvas.getContext('2d')}), kein WebGL. Wichtige, in Drift verwendete Bausteine:\par
+\fi-240\li360 \bullet\tab \b Formen zeichnen:\b0  {\f1 ctx.beginPath()}, {\f1 ctx.arc()}, {\f1 ctx.fill()}/{\f1 ctx.stroke()} \uc1\u8211? Grundlage praktisch jeder Partikel-Darstellung\par\pard\sa180\sl276\slmult1
+\fi-240\li360 \bullet\tab \b Farbverl\uc1\u228?ufe:\b0  {\f1 ctx.createRadialGradient()} \uc1\u8211? u. a. f\uc1\u252?r die Seifenblasen-Optik der Wasserstoff-Atome und den Sonnen-Kern\par\pard\sa180\sl276\slmult1
+\fi-240\li360 \bullet\tab \b Compositing-Modi:\b0  {\f1 ctx.globalCompositeOperation = 'lighter'} (additive \uc1\u220?berlagerung, f\uc1\u252?r die Schimmer-Flecken der Seifenblasen) und {\f1 'multiply'} (f\uc1\u252?r dunkle Verdichtungen)\par\pard\sa180\sl276\slmult1
+\fi-240\li360 \bullet\tab \b Transformationen:\b0  {\f1 ctx.save()/restore()}, {\f1 ctx.translate()/rotate()/scale()} \uc1\u8211? z. B. f\uc1\u252?r die ovale Lichtpunkt-Darstellung auf den Atomen, passend zur Wolken-Neigung\par\pard\sa180\sl276\slmult1
+\fi-240\li360 \bullet\tab \b Muster/Kacheln:\b0  {\f1 ctx.createPattern(canvas, 'repeat')} mit {\f1 pattern.setTransform(matrix)} \uc1\u8211? Kern-Technik f\uc1\u252?r den nahtlos scrollenden Nebel-Hintergrund\par\pard\sa180\sl276\slmult1
+\par
+\page\b\fs34 2. Game-Loops mit requestAnimationFrame\b0\fs24\par\par
+Der Standard-Ansatz f\uc1\u252?r fl\uc1\u252?ssige Browser-Animation: eine Funktion, die sich selbst am Ende erneut \uc1\u252?ber {\f1 requestAnimationFrame(loop)} einplant, statt eines festen {\f1 setInterval}. Vorteil: synchronisiert sich automatisch mit der Bildwiederholrate des Ger\uc1\u228?ts und pausiert von selbst, wenn der Tab nicht sichtbar ist.\par
+\par
+In Drift berechnet {\f1 loop()} zun\uc1\u228?chst die vergangene Zeit seit dem letzten Bild ({\f1 dt}), ruft dann {\f1 update(dt)} f\uc1\u252?r die Physik auf, gefolgt von einer festen Sequenz von Zeichenaufrufen. Eine Besonderheit: W\uc1\u228?hrend der Sonnen-Z\uc1\u252?ndungssequenz \uc1\u252?bernimmt eine komplett eigene Zeichen-Routine ({\f1 updateAndDrawSunE2()}) exklusiv, der \uc1\u252?bliche Rest der Schleife wird w\uc1\u228?hrenddessen \uc1\u252?bersprungen ({\f1 return} vor dem normalen Zeichnen).\par
+\par
+\page\b\fs34 3. Prozedurales Rauschen & Domain Warping\b0\fs24\par\par
+\b Value Noise:\b0  Die einfachste Form von "organischem" Zufallsrauschen \uc1\u8211? ein grobes Raster echter Zufallswerte, bilinear interpoliert f\uc1\u252?r glatte \uc1\u220?berg\uc1\u228?nge zwischen den Rasterpunkten. In Drift die Basis f\uc1\u252?r den kompletten Nebel-Hintergrund.\par
+\par
+\b fBm (fraktales Brownsches Rauschen):\b0  Mehrere Oktaven (Aufl\uc1\u246?sungsstufen) desselben Rauschens werden mit abnehmendem Gewicht \uc1\u252?bereinandergelegt \uc1\u8211? erzeugt mehr wahrgenommenen Detailreichtum als eine einzelne Oktave.\par
+\par
+\b Domain Warping:\b0  Die eigentliche Technik hinter dem "wolkigen", wirbelnden Aussehen des Nebels. Statt ein Rauschmuster direkt an Position (u,v) abzulesen, wird zuerst ein anderes Rauschmuster benutzt, um (u,v) selbst zu verzerren \uc1\u8211? verschachtelt zwei- oder dreimal:\par
+{\f1 fbm(p + fbm(p + fbm(p)))}\par
+Jede Ebene "verbiegt" den Raum f\uc1\u252?r die n\uc1\u228?chste. Das Ergebnis wirkt organisch str\uc1\u246?mend statt wie einfache, statische Flecken.\par
+\par
+\b Nahtloses Kacheln:\b0  F\uc1\u252?r endloses Scrollen muss das Rauschraster an seinen R\uc1\u228?ndern periodisch sein ({\f1 Raster[Ende] = Raster[Anfang]}), sonst entsteht beim Wiederholen eine sichtbare Naht.\par
+\par
+\page\b\fs34 4. Zustandsmaschinen in reinem JavaScript\b0\fs24\par\par
+RAP und BAP (die beiden Autopilot-Systeme) teilen sich dieselbe grundlegende Zustands-Struktur: {\f1 'off'} / {\f1 'standby'} / {\f1 'active'}, mit klar benannten \uc1\u220?bergangs-Bedingungen (z. B. BAP wechselt bei \uc1\u252?ber 45\uc1\u176? Neigung in Standby, kehrt nach einem best\uc1\u228?tigten Atemzug zur\uc1\u252?ck in Active). Kein externes Framework n\uc1\u246?tig \uc1\u8211? eine einfache Zustands-Variable plus Funktionen, die genau pr\uc1\u252?fen, unter welchen Bedingungen sie wechseln darf, reicht f\uc1\u252?r diese Komplexit\uc1\u228?tsstufe v\uc1\u246?llig aus.\par
+\par
+\page\b\fs34 5. Physik-Simulation-Grundlagen\b0\fs24\par\par
+Drift nutzt eine einfache, semi-implizite Integration (Geschwindigkeit \uc1\u228?ndert sich durch Kr\uc1\u228?fte, Position \uc1\u228?ndert sich durch Geschwindigkeit, pro Bild), keine komplexe Physik-Bibliothek:\par
+\fi-240\li360 \bullet\tab \b Gravitation:\b0  {\f1 v += Richtung \uc1\u215? St\uc1\u228?rke / Abstand}\par\pard\sa180\sl276\slmult1
+\fi-240\li360 \bullet\tab \b Reibung:\b0  {\f1 v *= FRICTION} (ein Wert knapp unter 1, z. B. 0,995) \uc1\u8211? sorgt daf\uc1\u252?r, dass Bewegung \uc1\u252?ber Zeit nat\uc1\u252?rlich abklingt\par\pard\sa180\sl276\slmult1
+\fi-240\li360 \bullet\tab \b Quadratischer Luftwiderstand:\b0  zus\uc1\u228?tzliche Bremsung, die mit dem Quadrat der Geschwindigkeit w\uc1\u228?chst \uc1\u8211? realistischer bei hohen Geschwindigkeiten als reine lineare Reibung\par\pard\sa180\sl276\slmult1
+\par
+F\uc1\u252?r die Baby-Wolken-Orbitalphysik in Epoche 2 kommt echte inverse-quadratische Gravitation zum Einsatz ({\f1 a = G / r\uc1\u178?}), inklusive mehrerer Physik-Teilschritte pro Bild ("Substeps") f\uc1\u252?r stabilere Umlaufbahnen bei nahen Vorbeifl\uc1\u252?gen.\par
+\par
+\page\b\fs34 6. PWA-Grundlagen (Progressive Web App)\b0\fs24\par\par
+Eine PWA ist eine Website, die sich wie eine App installieren und (eingeschr\uc1\u228?nkt) offline nutzen l\uc1\u228?sst. Kernbestandteile:\par
+\fi-240\li360 \bullet\tab \b `manifest.json`\b0  \uc1\u8211? beschreibt Name, Icons, Startbildschirm-Verhalten\par\pard\sa180\sl276\slmult1
+\fi-240\li360 \bullet\tab \b Icons\b0  in mehreren Aufl\uc1\u246?sungen (Drift: 192px und 512px)\par\pard\sa180\sl276\slmult1
+\fi-240\li360 \bullet\tab \b Wake Lock API\b0  ({\f1 navigator.wakeLock.request('screen')}) \uc1\u8211? verhindert, dass der Bildschirm w\uc1\u228?hrend aktiver Autopilot-Nutzung abschaltet; wichtig: die Berechtigung muss bei jeder Sichtbarkeits-\uc1\u196?nderung ggf. neu angefordert werden, da Browser sie beim Verstecken der Seite automatisch freigeben\par\pard\sa180\sl276\slmult1
+\par
+\page\b\fs34 7. Performance-Techniken\b0\fs24\par\par
+\fi-240\li360 \bullet\tab \b R\uc1\u228?umliches Gitter statt Alle-gegen-Alle-Vergleich:\b0  F\uc1\u252?r Quark-Bindung und Trio-Vervollst\uc1\u228?ndigung nutzt Drift ein Gitter (Partikel werden nach grober Position in Zellen einsortiert), sodass nur benachbarte Zellen auf m\uc1\u246?gliche Bindungspartner gepr\uc1\u252?ft werden m\uc1\u252?ssen \uc1\u8211? deutlich g\uc1\u252?nstiger als jeden Partikel mit jedem zu vergleichen\par\pard\sa180\sl276\slmult1
+\fi-240\li360 \bullet\tab \b Teuer einmalig, g\uc1\u252?nstig oft:\b0  Der komplette Nebel-Hintergrund wird nur ein einziges Mal beim Laden auf eine kleine Zwischen-Leinwand gerechnet (mehrere tausend Rausch-Auswertungen pro Ebene), danach pro Bild nur noch als fertiges Muster gekachelt \uc1\u8211? ein einfaches, aber wirkungsvolles Muster f\uc1\u252?r jede Art rechenintensiver, aber statischer Optik\par\pard\sa180\sl276\slmult1
+\fi-240\li360 \bullet\tab \b Perzentil-Berechnung aus echten Stichproben statt Sch\uc1\u228?tzung:\b0  Wo ein Schwellenwert (z. B. "wie viel Fl\uc1\u228?che soll transparent sein") exakt einer Ziel-Prozentzahl entsprechen soll, ist das Sortieren der tats\uc1\u228?chlich erzeugten Werte und das Ablesen an der richtigen Stelle zuverl\uc1\u228?ssiger als eine gesch\uc1\u228?tzte Formel-Konstante\par\pard\sa180\sl276\slmult1
+}
