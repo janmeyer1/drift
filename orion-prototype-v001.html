@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>Orion Epoch 3 — Prototyp</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #04050a; overflow: hidden; height: 100%; }
+  canvas { display: block; }
+  #label {
+    position: fixed; bottom: 10px; left: 10px; color: rgba(200,210,255,0.5);
+    font-family: -apple-system, sans-serif; font-size: 11px; pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="label">Orion — echte Position, echte Helligkeit, echte Farbe. Reines Darstellungs-Prototyp, keine Spiellogik.</div>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let W, H;
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ================= REAL STAR DATA =================
+// RA in decimal hours, Dec in decimal degrees (J2000), apparent visual magnitude,
+// distance in light-years. Color approximates real spectral class.
+const STARS = {
+  betelgeuse: { name: 'Beteigeuze', ra: 5 + 55/60 + 10/3600, dec: 7 + 24/60 + 25/3600, mag: 0.5, dist: 550, color: '#ffb37a', role: 'shoulder' },
+  bellatrix:  { name: 'Bellatrix',  ra: 5 + 25/60 + 7/3600,  dec: 6 + 20/60 + 58/3600, mag: 1.64, dist: 243, color: '#cddcff', role: 'shoulder' },
+  mintaka:    { name: 'Mintaka',    ra: 5 + 32/60 + 0/3600,  dec: -(0 + 17/60 + 57/3600), mag: 2.23, dist: 1246, color: '#cddcff', role: 'belt' },
+  alnilam:    { name: 'Alnilam',    ra: 5 + 36/60 + 13/3600, dec: -(1 + 12/60 + 7/3600),  mag: 1.69, dist: 1200, color: '#d4e0ff', role: 'belt' },
+  alnitak:    { name: 'Alnitak',    ra: 5 + 40/60 + 46/3600, dec: -(1 + 56/60 + 33/3600), mag: 1.77, dist: 1260, color: '#cddcff', role: 'belt' },
+  saiph:      { name: 'Saiph',      ra: 5 + 47/60 + 45/3600, dec: -(9 + 40/60 + 11/3600), mag: 2.09, dist: 650, color: '#cddcff', role: 'foot' },
+  rigel:      { name: 'Rigel',      ra: 5 + 14/60 + 32/3600, dec: -(8 + 12/60 + 6/3600),  mag: 0.13, dist: 860, color: '#d8e4ff', role: 'foot' },
+  meissa:     { name: 'Meissa',     ra: 5 + 35/60 + 8/3600,  dec: 9 + 56/60 + 3/3600,     mag: 3.39, dist: 1100, color: '#cddcff', role: 'head' },
+};
+
+// Fixed anatomical routing graph — established in chat: feet enter, cross the belt (Mintaka/Alnitak
+// swap via Alnilam at random), continue to the nearer shoulder, both shoulders lead to the head.
+const ROUTES = [
+  ['rigel', 'mintaka'], ['saiph', 'alnitak'],
+  ['mintaka', 'alnilam'], ['alnilam', 'alnitak'],
+  ['mintaka', 'bellatrix'], ['alnitak', 'betelgeuse'],
+  ['betelgeuse', 'meissa'], ['bellatrix', 'meissa'],
+];
+
+// Special hidden elements — real objects invisible (or nearly so) to the naked eye. Positioned
+// near the belt/nebula region, matching their real sky location. Placeholder visuals for now —
+// intended as future purchasable upgrades, not yet functional.
+const RA_CENTER = 5.55, DEC_CENTER = 0;
+const SPECIALS = {
+  barnardsLoop: {
+    name: "Barnard's Loop",
+    // A huge, extremely faint arc (~10° across) roughly centered on the belt/nebula region,
+    // bulging toward the observer (west) side. Approximated as a large circular arc.
+    centerRa: 5.6, centerDec: -2.6, radiusDeg: 5.2,
+    arcStartDeg: 200, arcEndDeg: 340,
+  },
+  blackHole: {
+    name: 'Schwarzes Loch (Trapez-Haufen, vermutet)',
+    // Real suspected location: inside the Trapezium cluster, within the Orion Nebula (M42),
+    // just south of the belt.
+    ra: 5 + 35/60 + 16/3600, dec: -(5 + 23/60 + 23/3600),
+    massHint: '~100–200 Sonnenmassen (vermutet, ungesichert)',
+  },
+};
+
+// ================= PROJECTION =================
+// Simple linear projection — the field is small enough (~10°) that no spherical correction is
+// needed. Higher RA maps to the LEFT (matches the traditional Earth-view mirroring: Betelgeuse,
+// highest RA among the main stars, appears upper-left; Rigel, lowest RA, appears lower-right).
+// Higher Dec maps to smaller Y (north is up), matching the sky as seen from Earth.
+let scale = 1, offsetX = 0, offsetY = 0;
+function computeProjection() {
+  const margin = 90;
+  scale = Math.min((W - margin * 2) / 15, (H - margin * 2) / 20);
+  offsetX = W / 2;
+  offsetY = H / 2;
+}
+function project(raHours, decDeg) {
+  const raDeg = raHours * 15;
+  const x = offsetX - (raDeg - RA_CENTER * 15) * scale;
+  const y = offsetY - (decDeg - DEC_CENTER) * scale;
+  return { x, y };
+}
+
+// Magnitude -> screen radius. Lower magnitude = brighter = bigger, real inverse relationship,
+// simplified to a linear mapping since the whole set spans less than 4 magnitudes.
+function radiusForMag(mag) {
+  return Math.max(2.5, 15 - mag * 3.1);
+}
+
+// ================= BACKGROUND STARFIELD (decorative only, not real data) =================
+let bgStars = [];
+function makeBgStars() {
+  bgStars = [];
+  for (let i = 0; i < 220; i++) {
+    bgStars.push({ x: Math.random() * W, y: Math.random() * H, r: Math.random() * 1.2 + 0.2, a: Math.random() * 0.5 + 0.15 });
+  }
+}
+
+// ================= DRAWING =================
+function drawBackground() {
+  ctx.fillStyle = '#04050a';
+  ctx.fillRect(0, 0, W, H);
+  for (const s of bgStars) {
+    ctx.beginPath();
+    ctx.fillStyle = `rgba(200,210,255,${s.a})`;
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawRoutes() {
+  ctx.save();
+  ctx.strokeStyle = 'rgba(140,160,220,0.18)';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([4, 6]);
+  for (const [a, b] of ROUTES) {
+    const pa = project(STARS[a].ra, STARS[a].dec);
+    const pb = project(STARS[b].ra, STARS[b].dec);
+    ctx.beginPath();
+    ctx.moveTo(pa.x, pa.y);
+    ctx.lineTo(pb.x, pb.y);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawBarnardsLoop(now) {
+  const loop = SPECIALS.barnardsLoop;
+  const center = project(loop.centerRa, loop.centerDec);
+  const r = loop.radiusDeg * scale;
+  const pulse = 0.5 + Math.sin(now / 3000) * 0.5;
+  ctx.save();
+  ctx.strokeStyle = `rgba(200,90,110,${0.06 + pulse * 0.04})`; // faint red — ionized hydrogen glow
+  ctx.lineWidth = r * 0.06;
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, r, loop.arcStartDeg * Math.PI / 180, loop.arcEndDeg * Math.PI / 180);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawBlackHole(now) {
+  const bh = SPECIALS.blackHole;
+  const p = project(bh.ra, bh.dec);
+  const pulse = 0.5 + Math.sin(now / 1400) * 0.5;
+  ctx.save();
+  // faint accretion-ish ring, hinting at something gravitationally significant but unseen
+  const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 26);
+  grad.addColorStop(0, 'rgba(0,0,0,0.9)');
+  grad.addColorStop(0.4, `rgba(120,70,160,${0.25 + pulse * 0.15})`);
+  grad.addColorStop(1, 'rgba(120,70,160,0)');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, 26, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.fillStyle = '#000';
+  ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawStar(star) {
+  const p = project(star.ra, star.dec);
+  const r = radiusForMag(star.mag);
+  ctx.save();
+  // soft outer glow
+  const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r * 4);
+  grad.addColorStop(0, star.color + 'aa');
+  grad.addColorStop(0.3, star.color + '33');
+  grad.addColorStop(1, star.color + '00');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, r * 4, 0, Math.PI * 2);
+  ctx.fill();
+  // core
+  ctx.beginPath();
+  ctx.fillStyle = star.color;
+  ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+  // label
+  ctx.save();
+  ctx.font = '11px -apple-system, sans-serif';
+  ctx.fillStyle = 'rgba(210,220,255,0.55)';
+  ctx.textAlign = 'center';
+  ctx.fillText(star.name, p.x, p.y + r + 15);
+  ctx.restore();
+  return p;
+}
+
+function loop(now) {
+  drawBackground();
+  drawBarnardsLoop(now);
+  drawRoutes();
+  drawBlackHole(now);
+  for (const key in STARS) drawStar(STARS[key]);
+  requestAnimationFrame(loop);
+}
+
+computeProjection();
+makeBgStars();
+window.addEventListener('resize', () => { computeProjection(); makeBgStars(); });
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
