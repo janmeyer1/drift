@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Abstrakte JS Canvas Seifenblasen</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body, html {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #05050a; /* Tiefer, dunkler Hintergrund für maximalen Kontrast */
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+</head>
+<body>
+
+    <canvas id="bubbleCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('bubbleCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Canvas an Bildschirmgröße anpassen
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // Seifenblasen-Klasse
+        class SoapBubble {
+            constructor() {
+                this.reset();
+                // Zufällige Startposition auf Y-Achse, damit nicht alle unten starten
+                this.y = Math.random() * canvas.height; 
+            }
+
+            reset() {
+                this.x = Math.random() * canvas.width;
+                this.y = canvas.height + Math.random() * 100 + 50;
+                this.radius = Math.random() * 60 + 30; // Filigrane, mittlere Größen
+                this.vx = (Math.random() - 0.5) * 0.5; // Sanfter Drift zur Seite
+                this.vy = -(Math.random() * 0.8 + 0.4); // Aufwärtsgeschwindigkeit
+                this.wobbleSpeed = Math.random() * 0.02 + 0.01;
+                this.colorShiftSpeed = Math.random() * 0.002 + 0.001;
+                this.phase = Math.random() * Math.PI * 2; // Individueller Startpunkt fürs Wabern
+            }
+
+            update(time) {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.phase += this.wobbleSpeed;
+
+                // Wind/Zickzack-Effekt über Sinus
+                this.x += Math.sin(time * 0.002 + this.phase) * 0.2;
+
+                // Wenn die Blase oben aus dem Bildschirm fliegt, zurücksetzen
+                if (this.y < -this.radius * 2) {
+                    this.reset();
+                }
+            }
+
+            draw(time) {
+                ctx.save();
+                
+                // 'screen' sorgt dafür, dass sich die Farben beim Überlagern realistisch aufhellen
+                ctx.globalCompositeOperation = 'screen';
+
+                // --- 1. DER FILIGRANE REGENBOGEN-MANTEL (KONTUR) ---
+                // Farbversatz animieren über die Zeit
+                let shift = Math.sin(time * this.colorShiftSpeed) * 0.15;
+
+                let ringGrad = ctx.createRadialGradient(
+                    this.x, this.y, this.radius - 1.5,
+                    this.x, this.y, this.radius + 1.5
+                );
+                
+                ringGrad.addColorStop(0, 'rgba(255, 255, 255, 0)');
+                ringGrad.addColorStop(Math.max(0, 0.1 + shift), 'rgba(0, 240, 255, 0.8)');   // Cyan
+                ringGrad.addColorStop(0.5 + shift, 'rgba(255, 0, 128, 0.8)');               // Magenta
+                ringGrad.addColorStop(Math.min(1, 0.9 + shift), 'rgba(255, 240, 0, 0.8)');   // Gelb
+                ringGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+
+                ctx.strokeStyle = ringGrad;
+                ctx.lineWidth = 1.5; // Hauchdünne Haarlinie
+
+                // Verzerrte Kreisform berechnen (Waber-Effekt)
+                ctx.beginPath();
+                const steps = 64; // Auflösung des Kreises
+                for (let i = 0; i <= steps; i++) {
+                    let angle = (i / steps) * Math.PI * 2;
+                    
+                    // Formel für das organische Schwingen der Membran
+                    let wobble = Math.sin(angle * 5 + this.phase) * 1.5; 
+                    let currentRadius = this.radius + wobble;
+
+                    let bx = this.x + Math.cos(angle) * currentRadius;
+                    let by = this.y + Math.sin(angle) * currentRadius;
+
+                    if (i === 0) ctx.moveTo(bx, by);
+                    else ctx.lineTo(bx, by);
+                }
+                ctx.closePath();
+                ctx.stroke();
+
+
+                // --- 2. DIE SPHÄREN-OPTISCHE TIEFE (ZARTER SHADING-GLOW) ---
+                // Versatz der Lichtquelle nach links oben für 3D-Volumen
+                let lightX = this.x - this.radius * 0.25;
+                let lightY = this.y - this.radius * 0.25;
+
+                let glowGrad = ctx.createRadialGradient(
+                    lightX, lightY, 0,
+                    this.x, this.y, this.radius
+                );
+                glowGrad.addColorStop(0, 'rgba(255, 255, 255, 0.25)'); // Glanzpunkt
+                glowGrad.addColorStop(0.4, 'rgba(0, 255, 255, 0.02)');  // Kaum sichtbarer Kern
+                glowGrad.addColorStop(0.8, 'rgba(240, 0, 255, 0.06)');  // Interferenz-Schimmer vor dem Rand
+                glowGrad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+
+                ctx.fillStyle = glowGrad;
+                
+                // Für das Shading nutzen wir denselben Pfad (vereinfacht als Kreis)
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.restore();
+            }
+        }
+
+        // Blasen-Array initialisieren
+        const bubbles = [];
+        const maxBubbles = 40; // Anzahl der Blasen auf dem Schirm
+        for (let i = 0; i < maxBubbles; i++) {
+            bubbles.push(new SoapBubble());
+        }
+
+        // Animations-Schleife
+        function animate(timestamp) {
+            // Leicht transparentes Schwarz füllen für einen minimalen Motion-Blur-Effekt (optional)
+            ctx.fillStyle = 'rgba(5, 5, 10, 1)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Alle Blasen updaten und zeichnen
+            bubbles.forEach(bubble => {
+                bubble.update(timestamp);
+                bubble.draw(timestamp);
+            });
+
+            requestAnimationFrame(animate);
+        }
+
+        // Start der Animation
+        requestAnimationFrame(animate);
+    </script>
+</body>
+</html>
