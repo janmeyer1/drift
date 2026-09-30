@@ -1,0 +1,1067 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>Orion Epoch 3 — Prototyp</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #04050a; overflow: hidden; height: 100%; }
+  canvas { display: block; }
+  #label {
+    position: fixed; bottom: 10px; left: 10px; color: rgba(200,210,255,0.5);
+    font-family: -apple-system, sans-serif; font-size: 11px; pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="label">Orion — echte Position, echte Helligkeit, echte Farbe. Reines Darstellungs-Prototyp, keine Spiellogik.</div>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let W, H;
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ================= REAL STAR DATA =================
+// RA in decimal hours, Dec in decimal degrees (J2000), apparent visual magnitude,
+// distance in light-years. Color approximates real spectral class.
+// z: geplante Spieltiefe (noch ohne Spiellogik-Funktion, nur für Skalierung reserviert). Konvention
+// (per perspectiveScale weiter unten, 1:1 aus dem Hauptprogramm): höheres z = weiter hinten im Raum
+// = kleiner dargestellt; z=0 wäre die Bildschirmebene selbst. Ursprünglich hatte Jan Gürtel/Kopf
+// negativ notiert (-1000/-1500), was mit dieser Formel "davor/näher an der Kamera" bedeutet hätte —
+// also genau verkehrt herum zu "weit hinten im Raum". Korrigiert auf positive Werte, sodass die
+// Tiefe entlang Rigel(500) -> Schultern(600) -> Gürtel(1000) -> Kopf/Meissa(1500) monoton zunimmt
+// und beim Hineinfliegen in die Szene konsequent kleiner statt größer wird.
+// Saiph wurde nicht spezifiziert und bleibt bewusst ohne z, bis das nachgereicht wird.
+const STARS = {
+  betelgeuse: { name: 'Beteigeuze', ra: 5 + 55/60 + 10/3600, dec: 7 + 24/60 + 25/3600, mag: 0.5, dist: 550, color: '#ffb37a', role: 'shoulder', z: 600 },
+  bellatrix:  { name: 'Bellatrix',  ra: 5 + 25/60 + 7/3600,  dec: 6 + 20/60 + 58/3600, mag: 1.64, dist: 243, color: '#cddcff', role: 'shoulder', z: 600 },
+  mintaka:    { name: 'Mintaka',    ra: 5 + 32/60 + 0/3600,  dec: -(0 + 17/60 + 57/3600), mag: 2.23, dist: 1246, color: '#cddcff', role: 'belt', z: 1000 },
+  alnilam:    { name: 'Alnilam',    ra: 5 + 36/60 + 13/3600, dec: -(1 + 12/60 + 7/3600),  mag: 1.69, dist: 1200, color: '#d4e0ff', role: 'belt', z: 1000 },
+  alnitak:    { name: 'Alnitak',    ra: 5 + 40/60 + 46/3600, dec: -(1 + 56/60 + 33/3600), mag: 1.77, dist: 1260, color: '#cddcff', role: 'belt', z: 1000 },
+  saiph:      { name: 'Saiph',      ra: 5 + 47/60 + 45/3600, dec: -(9 + 40/60 + 11/3600), mag: 2.09, dist: 650, color: '#cddcff', role: 'foot' },
+  rigel:      { name: 'Rigel',      ra: 5 + 14/60 + 32/3600, dec: -(8 + 12/60 + 6/3600),  mag: 0.13, dist: 860, color: '#d8e4ff', role: 'foot', z: 500 },
+  meissa:     { name: 'Meissa',     ra: 5 + 35/60 + 8/3600,  dec: 9 + 56/60 + 3/3600,     mag: 3.39, dist: 1100, color: '#cddcff', role: 'head', z: 1500 },
+};
+
+// Fixed anatomical routing graph — established in chat: feet enter, cross the belt (Mintaka/Alnitak
+// swap via Alnilam at random), continue to the nearer shoulder, both shoulders lead to the head.
+const ROUTES = [
+  ['rigel', 'mintaka'], ['saiph', 'alnitak'],
+  ['mintaka', 'alnilam'], ['alnilam', 'alnitak'],
+  ['mintaka', 'bellatrix'], ['alnitak', 'betelgeuse'],
+  ['betelgeuse', 'meissa'], ['bellatrix', 'meissa'],
+];
+
+// Special hidden elements — real objects invisible (or nearly so) to the naked eye. Positioned
+// near the belt/nebula region, matching their real sky location. Placeholder visuals for now —
+// intended as future purchasable upgrades, not yet functional.
+const RA_CENTER = 5.55, DEC_CENTER = 0;
+const SPECIALS = {
+  barnardsLoop: {
+    name: "Barnard's Loop",
+    // A huge, extremely faint arc (~10° across) roughly centered on the belt/nebula region,
+    // bulging toward the observer (west) side. Approximated as a large circular arc.
+    centerRa: 5.6, centerDec: -2.6, radiusDeg: 5.2,
+    arcStartDeg: 200, arcEndDeg: 340,
+    active: true, // am Anfang immer aktiv — Deaktivierung/Freischaltbarkeit ist ein späterer Mechanismus
+  },
+  blackHole: {
+    name: 'Schwarzes Loch (Trapez-Haufen, vermutet)',
+    // Real suspected location: inside the Trapezium cluster, within the Orion Nebula (M42),
+    // just south of the belt.
+    ra: 5 + 35/60 + 16/3600, dec: -(5 + 23/60 + 23/3600),
+    massHint: '~100–200 Sonnenmassen (vermutet, ungesichert)',
+  },
+};
+
+// ================= PROJECTION =================
+// Simple linear projection — the field is small enough (~10°) that no spherical correction is
+// needed. Higher RA maps to the LEFT (matches the traditional Earth-view mirroring: Betelgeuse,
+// highest RA among the main stars, appears upper-left; Rigel, lowest RA, appears lower-right).
+// Higher Dec maps to smaller Y (north is up), matching the sky as seen from Earth.
+let scale = 1, offsetX = 0, offsetY = 0;
+function computeProjection() {
+  const margin = 90;
+  scale = Math.min((W - margin * 2) / 15, (H - margin * 2) / 20);
+  offsetX = W / 2;
+  offsetY = H / 2;
+}
+function project(raHours, decDeg) {
+  const raDeg = raHours * 15;
+  const x = offsetX - (raDeg - RA_CENTER * 15) * scale;
+  const y = offsetY - (decDeg - DEC_CENTER) * scale;
+  return { x, y };
+}
+
+// Magnitude -> screen radius. Lower magnitude = brighter = bigger, real inverse relationship,
+// simplified to a linear mapping since the whole set spans less than 4 magnitudes.
+function radiusForMag(mag) {
+  return Math.max(2.5, 15 - mag * 3.1);
+}
+
+// ================= BACKGROUND STARFIELD (decorative only, not real data) =================
+let bgStars = [];
+function makeBgStars() {
+  bgStars = [];
+  for (let i = 0; i < 220; i++) {
+    bgStars.push({ x: Math.random() * W, y: Math.random() * H, r: Math.random() * 1.2 + 0.2, a: Math.random() * 0.5 + 0.15 });
+  }
+}
+
+// ================= DRAWING =================
+function drawBackground() {
+  ctx.fillStyle = '#04050a';
+  ctx.fillRect(0, 0, W, H);
+  for (const s of bgStars) {
+    ctx.beginPath();
+    ctx.fillStyle = `rgba(200,210,255,${s.a})`;
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawRoutes() {
+  ctx.save();
+  ctx.strokeStyle = 'rgba(140,160,220,0.18)';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([4, 6]);
+  for (const [a, b] of ROUTES) {
+    const pa = project(STARS[a].ra, STARS[a].dec);
+    const pb = project(STARS[b].ra, STARS[b].dec);
+    ctx.beginPath();
+    ctx.moveTo(pa.x, pa.y);
+    ctx.lineTo(pb.x, pb.y);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawBarnardsLoop(now) {
+  const loop = SPECIALS.barnardsLoop;
+  const center = project(loop.centerRa, loop.centerDec);
+  const r = loop.radiusDeg * scale;
+  const pulse = 0.5 + Math.sin(now / 3000) * 0.5;
+  const active = loop.active !== false; // am Anfang immer aktiv, sofern nicht explizit deaktiviert
+  ctx.save();
+  if (active) {
+    // Deutlich sichtbare, warnend pulsierende Barriere — Kernlinie plus weicher Glow-Saum
+    const glowPulse = 0.5 + Math.sin(now / 1400) * 0.5;
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
+    ctx.strokeStyle = `rgba(230,90,110,${0.14 + glowPulse * 0.1})`;
+    ctx.lineWidth = r * 0.16;
+    ctx.beginPath();
+    ctx.arc(center.x, center.y, r, loop.arcStartDeg * Math.PI / 180, loop.arcEndDeg * Math.PI / 180);
+    ctx.stroke();
+    ctx.restore();
+    ctx.strokeStyle = `rgba(255,130,145,${0.55 + pulse * 0.25})`;
+    ctx.lineWidth = r * 0.045;
+  } else {
+    ctx.strokeStyle = `rgba(200,90,110,${0.06 + pulse * 0.04})`; // faint red — ionized hydrogen glow
+    ctx.lineWidth = r * 0.06;
+  }
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, r, loop.arcStartDeg * Math.PI / 180, loop.arcEndDeg * Math.PI / 180);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawBlackHole(now) {
+  const bh = SPECIALS.blackHole;
+  const p = project(bh.ra, bh.dec);
+  const pulse = 0.5 + Math.sin(now / 1400) * 0.5;
+  ctx.save();
+  // faint accretion-ish ring, hinting at something gravitationally significant but unseen
+  const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 26);
+  grad.addColorStop(0, 'rgba(0,0,0,0.9)');
+  grad.addColorStop(0.4, `rgba(120,70,160,${0.25 + pulse * 0.15})`);
+  grad.addColorStop(1, 'rgba(120,70,160,0)');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, 26, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.fillStyle = '#000';
+  ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawStar(star) {
+  const p = project(star.ra, star.dec);
+  const r = radiusForMag(star.mag);
+  ctx.save();
+  // soft outer glow
+  const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r * 4);
+  grad.addColorStop(0, star.color + 'aa');
+  grad.addColorStop(0.3, star.color + '33');
+  grad.addColorStop(1, star.color + '00');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, r * 4, 0, Math.PI * 2);
+  ctx.fill();
+  // core
+  ctx.beginPath();
+  ctx.fillStyle = star.color;
+  ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+  // label
+  ctx.save();
+  ctx.font = '11px -apple-system, sans-serif';
+  ctx.fillStyle = 'rgba(210,220,255,0.55)';
+  ctx.textAlign = 'center';
+  ctx.fillText(star.name, p.x, p.y + r + 15);
+  ctx.restore();
+  return p;
+}
+
+// ================= E3 PROTOTYPE OBJECTS (Baby Cloud, Zündung, drei Sonnentypen) =================
+// Vereinfachte, partikelarme Varianten der E2-Zeichensprache (Sprenkel-Wolke, Flare-Sonne) —
+// bewusst ohne die volle 3D-Projektion/Warp-Textur aus E2, weil hier mehrere Objekte gleichzeitig
+// und dauerhaft sichtbar sein müssen (Zielbudget ~40-100 Partikel für die ganze Szene).
+const E3_UNIT = 11; // Referenzgröße "Midwife-Molekül" in px, an der sich alle anderen Größen orientieren
+const E3_BABY_CLOUD_SPAWN_R = E3_UNIT * 1.7;
+const E3_BABY_CLOUD_PREIGNITION_R = E3_BABY_CLOUD_SPAWN_R * 1.3; // +30% ggü. Spawn — deutlich massiger
+const E3_RED_DWARF_R = E3_UNIT * 1.3;
+const E3_YELLOW_SUN_R = E3_RED_DWARF_R * 1.6;
+const E3_BLUE_GIANT_R = E3_YELLOW_SUN_R * Math.cbrt(3); // max. 3x Volumen der Gelben Sonne -> Radius skaliert mit Kubikwurzel
+
+const E3_OBJECTS = [
+  { kind: 'babyCloud', stage: 'spawn', igniting: false, radius: E3_BABY_CLOUD_SPAWN_R, hue: 32, label: 'BC: Spawn' },
+  { kind: 'babyCloud', stage: 'preIgnition', igniting: false, radius: E3_BABY_CLOUD_PREIGNITION_R, hue: 32, label: 'BC: vor Zündung' },
+  { kind: 'babyCloud', stage: 'ignite', igniting: true, radius: E3_BABY_CLOUD_PREIGNITION_R, hue: 32, label: 'BC: Zündung' },
+  { kind: 'star', radius: E3_RED_DWARF_R, hue: 8, label: 'Roter Zwerg' },
+  // futureHue: Farbton des Sterns, der bei einem künftigen Merger (Blue-Straggler-Mechanik) aus
+  // diesem Duo hervorgehen würde — Glow und Schweife deuten diesen Farbwechsel schon an.
+  { kind: 'duo', radius: E3_RED_DWARF_R * 1.9, hue: 8, futureHue: 42, label: 'Duo: Rote Zwerge' },
+  { kind: 'star', radius: E3_YELLOW_SUN_R, hue: 42, label: 'Gelbe Sonne', warp: true },
+  { kind: 'duo', radius: E3_YELLOW_SUN_R * 1.9, hue: 42, futureHue: 212, label: 'Duo: Gelbe Zwerge' },
+  { kind: 'star', radius: E3_BLUE_GIANT_R, hue: 212, label: 'Blauer Riese', warp: true },
+];
+
+function hslToRgb(h, s, l) {
+  h = ((h % 360) + 360) % 360 / 360;
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs((h * 6) % 2 - 1));
+  const m = l - c / 2;
+  let r, g, b;
+  if (h < 1 / 6) [r, g, b] = [c, x, 0];
+  else if (h < 2 / 6) [r, g, b] = [x, c, 0];
+  else if (h < 3 / 6) [r, g, b] = [0, c, x];
+  else if (h < 4 / 6) [r, g, b] = [0, x, c];
+  else if (h < 5 / 6) [r, g, b] = [x, 0, c];
+  else [r, g, b] = [c, 0, x];
+  return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)];
+}
+
+// Farbmischung für den Duo-Sonnen-Farbwechsel Richtung futureHue: bewusst in RGB statt direkt über
+// den Farbton (h) gemischt — eine lineare Hue-Interpolation zwischen z.B. Gelb (42) und Blau (212)
+// liefe mitten durch Grün, was weder "feurig" noch nach einem plausiblen Sternfarb-Übergang aussieht.
+// Die RGB-Mischung bleibt dagegen nahe an warmen/weißen Zwischentönen.
+function mixHueRgba(hueA, hueB, t, sat, light, alpha) {
+  const a = hslToRgb(hueA, sat, light);
+  const b = hslToRgb(hueB, sat, light);
+  const r = Math.round(a[0] + (b[0] - a[0]) * t);
+  const g = Math.round(a[1] + (b[1] - a[1]) * t);
+  const bl = Math.round(a[2] + (b[2] - a[2]) * t);
+  return `rgba(${r}, ${g}, ${bl}, ${alpha})`;
+}
+
+// Vorberechnete Domain-Warp-Granulationstextur — einmal pro Sonne gebacken, nicht pro Frame,
+// damit die zusätzliche Optik nicht auf die Framerate schlägt. Nur ab der Gelben Sonne aufwärts
+// (Jans Vorgabe: für den Roten Zwerg nicht nötig). Graustufen + 'multiply' statt farbiges 'soft-light' —
+// das erzeugt sichtbar dunklere Granulationszellen (wie echte Photosphären-Granulation) statt eines
+// kaum wahrnehmbaren Farbschimmers.
+// Nahtlos kachelbare Textur: Koordinaten laufen als Winkel 0..2π über die Kachel, und jede
+// Frequenz (Warp-Terme wie Turbulenz-Oktaven) ist eine GANZE Zahl. sin/cos sind 2π-periodisch,
+// also ist auch das gesamte Ergebnis exakt 2π-periodisch in u und v -> Kachelrand ist unsichtbar,
+// egal wie oft/weit die Textur später verschoben wird ("unendliche" Fläche).
+function bakeDiscWarpTexture(size, seed) {
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const cx = c.getContext('2d');
+  const img = cx.createImageData(size, size);
+  const TAU = Math.PI * 2;
+  for (let py = 0; py < size; py++) {
+    for (let px = 0; px < size; px++) {
+      const u = (px / size) * TAU, v = (py / size) * TAU;
+      const wu = u + 0.5 * Math.sin(v * 3 + seed) * Math.cos(u * 2 - seed);
+      const wv = v + 0.5 * Math.cos(u * 3 - seed) * Math.sin(v * 2 + seed);
+      let val = 0, amp = 1, freq = 2, sum = 0;
+      for (let o = 0; o < 4; o++) {
+        val += amp * (0.5 + 0.5 * Math.sin(wu * freq + seed) * Math.sin(wv * freq - seed * 1.3));
+        sum += amp;
+        amp *= 0.52;
+        freq *= 2; // bleibt ganzzahlig -> Periodizität bleibt exakt erhalten
+      }
+      val /= sum;
+      const idx = (py * size + px) * 4;
+      const gray = Math.round(120 + val * 135); // 120..255 -> deutlich sichtbare, aber nicht schwarze Zellgrenzen
+      img.data[idx] = gray;
+      img.data[idx + 1] = gray;
+      img.data[idx + 2] = gray;
+      img.data[idx + 3] = 255;
+    }
+  }
+  cx.putImageData(img, 0, 0);
+  return c;
+}
+
+// Drei unabhängige, sehr langsame Bewegungen der Oberflächentextur (Sonnenradius bleibt dabei
+// exakt konstant, es zoomt nur die Textur innerhalb der festen Kreis-Clip-Fläche):
+// 1) permanentes Verschieben (dank nahtloser Kachel unsichtbar am Kachelrand -> wirkt unendlich),
+// 2) eine eigene, sehr langsame Drehung zusätzlich zur Verschiebung,
+// 3) ein periodisches +/-5%-Zoomen.
+function drawDiscWarpOverlay(obj, now) {
+  if (!obj.warpTexture) return;
+  const { x, y, radius } = obj;
+  if (!obj.warpPattern) obj.warpPattern = ctx.createPattern(obj.warpTexture, 'repeat');
+
+  const panX = now * 0.014 + obj.seed * 137; // Hauptrichtung: waagerecht
+  const panY = now * 0.0018 + obj.seed * 59; // nur ein kleiner Y-Anteil
+  const spinDeg = (now * 0.0000045 + obj.seed) * (180 / Math.PI);
+  const zoomPeriod = 21000; // ms für einen vollen +/-5%-Zyklus
+  const zoom = 1 + 0.05 * Math.sin((now / zoomPeriod) * Math.PI * 2 + obj.seed);
+
+  const m = new DOMMatrix();
+  m.translateSelf(x, y);
+  m.rotateSelf(spinDeg);
+  m.scaleSelf(zoom, zoom);
+  m.translateSelf(panX, panY);
+  obj.warpPattern.setTransform(m);
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(x, y, radius * 0.985, 0, Math.PI * 2);
+  ctx.clip();
+  ctx.globalCompositeOperation = 'multiply';
+  ctx.globalAlpha = 0.6;
+  ctx.fillStyle = obj.warpPattern;
+  ctx.fillRect(x - radius * 1.3, y - radius * 1.3, radius * 2.6, radius * 2.6);
+  ctx.restore();
+}
+
+// Unregelmäßige, pulsierende UND langsam mitrotierende Korona-Lappen statt eines starren Rings.
+function drawCorona(obj, now) {
+  const { x, y, radius, hue } = obj;
+  const base = ctx.createRadialGradient(x, y, radius * 0.7, x, y, radius * 1.4);
+  base.addColorStop(0, `hsla(${hue}, 85%, 60%, 0.35)`);
+  base.addColorStop(1, `hsla(${hue}, 85%, 50%, 0)`);
+  ctx.fillStyle = base;
+  ctx.beginPath();
+  ctx.arc(x, y, radius * 1.4, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'screen';
+  const lobeCount = 6;
+  for (let i = 0; i < lobeCount; i++) {
+    // Grundwinkel wandert mit der Sonnenrotation UND atmet zusätzlich leicht -> spürbar lebendig
+    const a = obj.rotation * 0.7 + i * (Math.PI * 2 / lobeCount) + Math.sin(now * 0.000135 + i * 2 + obj.seed) * 0.35;
+    const pulse = 0.5 + 0.5 * Math.sin(now * 0.000675 + i * 1.7 + obj.seed);
+    const reach = radius * (1.0 + 0.55 * pulse);
+    const lx = x + Math.cos(a) * reach;
+    const ly = y + Math.sin(a) * reach;
+    const lsize = radius * (0.3 + 0.25 * pulse);
+    const lg = ctx.createRadialGradient(lx, ly, 0, lx, ly, lsize);
+    lg.addColorStop(0, `hsla(${hue}, 90%, 68%, ${0.14 + 0.2 * pulse})`);
+    lg.addColorStop(1, `hsla(${hue}, 90%, 55%, 0)`);
+    ctx.fillStyle = lg;
+    ctx.beginPath();
+    ctx.arc(lx, ly, lsize, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+// Ein Flare-Teilchen: entsteht knapp unterhalb der Oberfläche (nicht in der Mitte — man sieht die
+// Szene ja praktisch immer vor Schwarz, da soll es wirken, als würde es von der Oberfläche
+// losfliegen), schießt in einer leicht gekrümmten Bahn nach außen (nicht radial-gerade) und
+// schwingt auf einem eigenen Bogen wieder auf die Oberfläche zurück. Winkel, Krümmung und
+// Zyklusdauer werden bei jedem neuen Umlauf neu ausgewürfelt.
+function newFlareParticle() {
+  return {
+    localAngle: Math.random() * Math.PI * 2,
+    angleDrift: (Math.random() - 0.5) * 1.5,
+    period: 2400 + Math.random() * 2600,
+    t: 0,
+    spawnFrac: 0.80 + Math.random() * 0.14,
+    maxFrac: 1.5 + Math.random() * 0.5,
+    dormant: Math.random() < 0.6, // Zufallskomponente in der Spawn-Funktion selbst: nicht jedes
+    gapT: 0,                      // Teilchen startet sofort aktiv — ein Teil wartet erst eine
+    gap: Math.random() * 1400,    // zufällige Pause ab, bevor es überhaupt zum ersten Mal auftaucht
+  };
+}
+
+function updateAndDrawFlares(obj, dt) {
+  const { x, y, radius, hue } = obj;
+  if (!obj.flareParticles) {
+    obj.flareParticles = [];
+    for (let i = 0; i < 5; i++) obj.flareParticles.push(newFlareParticle());
+  }
+  ctx.save();
+  // Normales (nicht additives) Blending mit hoher Deckkraft — ein 'screen'-Verlauf verschwindet
+  // auf einer bereits hellen Sonnenscheibe fast spurlos, ein kräftiger, deckender Punkt ist dagegen
+  // in jedem Sonnenbereich sichtbar, egal ob über dem hellen Kern oder vor dem Weltraum.
+  for (const p of obj.flareParticles) {
+    if (p.dormant) {
+      p.gapT += dt;
+      if (p.gapT < p.gap) continue; // noch in der zufälligen Pause -> unsichtbar, kein Rendern
+      Object.assign(p, newFlareParticle(), { dormant: false, t: 0 }); // taucht frisch ausgewürfelt auf
+    } else {
+      p.t += dt;
+      if (p.t > p.period) {
+        // Zufällige Pause statt nahtlosem Reroll: der Spawn-ZEITPUNKT selbst wird jetzt ausgewürfelt,
+        // nicht nur Winkel/Bahn/Dauer des nächsten Umlaufs.
+        p.dormant = true;
+        p.gapT = 0;
+        p.gap = 200 + Math.random() * 1400;
+        continue;
+      }
+    }
+    const phase = p.t / p.period;
+    let distFrac, angleOffset;
+    if (phase < 0.35) {
+      const t0 = phase / 0.35;
+      distFrac = p.spawnFrac + (p.maxFrac - p.spawnFrac) * Math.pow(t0, 0.7);
+      angleOffset = p.angleDrift * t0;
+    } else {
+      const t1 = (phase - 0.35) / 0.65;
+      const ease = Math.pow(1 - t1, 0.6);
+      distFrac = p.spawnFrac + (p.maxFrac - p.spawnFrac) * ease;
+      angleOffset = p.angleDrift * (1 + t1 * 2.2); // bogenförmiger, gekrümmter Rückweg statt gerader Linie
+    }
+    const angle = obj.rotation + p.localAngle + angleOffset;
+    const r = radius * distFrac;
+    const fx = x + Math.cos(angle) * r;
+    const fy = y + Math.sin(angle) * r;
+    const glow = Math.min(1, distFrac / p.maxFrac);
+    const fsize = radius * (0.13 + 0.13 * glow);
+    const alpha = 0.55 + 0.4 * glow;
+    const fgrad = ctx.createRadialGradient(fx, fy, 0, fx, fy, fsize);
+    fgrad.addColorStop(0, `hsla(${hue + 20}, 100%, 94%, ${alpha})`);
+    fgrad.addColorStop(0.5, `hsla(${hue + 8}, 100%, 78%, ${alpha * 0.75})`);
+    fgrad.addColorStop(1, `hsla(${hue}, 100%, 60%, 0)`);
+    ctx.fillStyle = fgrad;
+    ctx.beginPath();
+    ctx.arc(fx, fy, fsize, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function layoutE3Objects() {
+  // Packt die Objekte nebeneinander anhand ihrer tatsächlichen Breite
+  // (inkl. Korona bei Sternen), statt sie stur gleichmäßig zu verteilen —
+  // so bleibt der Blaue Riese immer vollständig auf dem Bildschirm, egal
+  // wie schmal das Gerät ist. Bei zu wenig Platz wird die gesamte Reihe
+  // gleichmäßig herunterskaliert (Größenverhältnisse bleiben exakt erhalten).
+  const margin = 16;
+  const gap = 10;
+  for (const o of E3_OBJECTS) {
+    if (o.baseRadius === undefined) o.baseRadius = o.radius;
+  }
+  const halfW = o => (o.kind === 'star' || o.kind === 'duo' ? o.baseRadius * 1.4 : o.baseRadius);
+  const sumHalfW2 = E3_OBJECTS.reduce((sum, o) => sum + halfW(o) * 2, 0);
+  const totalWidth = sumHalfW2 + gap * (E3_OBJECTS.length - 1);
+  const usableW = W - margin * 2;
+  const fitScale = Math.min(1, usableW / totalWidth);
+  // Der Gap muss beim Schrumpfen mitskaliert werden, sonst bleibt die Reihe insgesamt
+  // breiter als usableW (Lücken bleiben "voll groß" während nur die Objekte schrumpfen) ->
+  // das letzte Objekt (Blauer Riese) rutscht rechts aus dem Canvas.
+  const scaledGap = gap * fitScale;
+  const scaledTotalWidth = sumHalfW2 * fitScale + scaledGap * (E3_OBJECTS.length - 1);
+  const maxHalfHeight = Math.max(...E3_OBJECTS.map(o => halfW(o) * fitScale));
+  // Jedes Objekt bekommt seine eigene Beschriftungszeile (siehe drawE3Objects) -> Reserve muss mit
+  // der Objektanzahl mitwachsen, sonst rutscht die Beschriftung der letzten Objekte unten aus dem Bild.
+  const labelReserve = 46 + (E3_OBJECTS.length - 1) * 11;
+  const y = H - Math.max(110, maxHalfHeight + labelReserve);
+  let x = margin + Math.max(0, (usableW - scaledTotalWidth) / 2);
+  for (const o of E3_OBJECTS) {
+    o.radius = o.baseRadius * fitScale;
+    const hw = halfW(o) * fitScale;
+    x += hw;
+    o.x = x;
+    o.y = y;
+    x += hw + scaledGap;
+  }
+}
+
+// Drei klar unterscheidbare Baby-Cloud-Stadien statt einer einzelnen "generischen" Wolke:
+// 'spawn' (frisch entstanden, ruhig, wenig Sprenkel) -> 'preIgnition' (schon fast voll geladen,
+// +30% Radius ggü. Spawn, deutlich mehr und aktiver flackernde Sprenkel, spürbares Kern-Atmen)
+// -> 'ignite' (kurzer Zündungsblitz, unverändert). Rotation bewusst weiter gedämpft, weil diese
+// Objekte später als Partikel durch den Vortex fliegen; zu schnelle Rotation wirkt dabei unruhig.
+// Zündung ist jetzt ein echter Zyklus statt eines Dauerpulses: geladene Wolke -> Kollaps auf 4px
+// -> greller Zündfunke -> Explosion mit herausfliegenden Funken -> zurück auf Anfang (Demo-Loop).
+function drawBabyCloudIgnition(obj, now) {
+  const { x, y, radius, hue } = obj;
+  const period = 3400;
+  const t = (now + obj.seed * 1000) % period;
+  const holdEnd = period * 0.40;
+  const collapseEnd = period * 0.55;
+  const flashEnd = period * 0.60;
+  ctx.save();
+  if (t < holdEnd) {
+    const pulse = 0.5 + 0.5 * Math.sin(t / 140);
+    const grad = ctx.createRadialGradient(x, y, 0, x, y, radius);
+    grad.addColorStop(0, `hsla(45, 90%, ${80 + pulse * 14}%, 0.95)`);
+    grad.addColorStop(0.45, `hsla(${hue}, 85%, 58%, 0.75)`);
+    grad.addColorStop(1, `hsla(${hue}, 80%, 40%, 0)`);
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (t < collapseEnd) {
+    // Beschleunigter Kollaps Richtung 4px, Farbe wandert Richtung weiß-heiß
+    const p = (t - holdEnd) / (collapseEnd - holdEnd);
+    const dispR = Math.max(4, radius + (4 - radius) * Math.pow(p, 1.7));
+    const grad = ctx.createRadialGradient(x, y, 0, x, y, dispR);
+    grad.addColorStop(0, 'hsla(48, 95%, 94%, 1)');
+    grad.addColorStop(0.6, `hsla(45, 90%, 80%, ${0.9 - p * 0.3})`);
+    grad.addColorStop(1, `hsla(${hue}, 85%, 55%, 0)`);
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(x, y, dispR, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (t < flashEnd) {
+    // Kurzer greller Punkt bei genau 4px — der eigentliche Zündfunke
+    ctx.globalCompositeOperation = 'screen';
+    const grad = ctx.createRadialGradient(x, y, 0, x, y, 12);
+    grad.addColorStop(0, 'hsla(50, 100%, 97%, 1)');
+    grad.addColorStop(1, 'hsla(48, 100%, 80%, 0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(x, y, 12, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = 'hsla(50, 100%, 98%, 1)';
+    ctx.beginPath();
+    ctx.arc(x, y, 4, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    // Explosion: schnell ausdehnender, verblassender Blitz plus herausfliegende Funken
+    const p = (t - flashEnd) / (period - flashEnd);
+    const burst = 1 - Math.pow(1 - p, 3); // schnell raus, dann abflachend
+    const dispR = 4 + (radius * 3.4 - 4) * burst;
+    const fade = Math.max(0, 1 - p * 1.15);
+    ctx.globalCompositeOperation = 'screen';
+    const grad = ctx.createRadialGradient(x, y, 0, x, y, dispR);
+    grad.addColorStop(0, `hsla(48, 100%, 95%, ${0.9 * fade})`);
+    grad.addColorStop(0.4, `hsla(${hue + 10}, 100%, 75%, ${0.6 * fade})`);
+    grad.addColorStop(1, `hsla(${hue}, 100%, 55%, 0)`);
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(x, y, dispR, 0, Math.PI * 2);
+    ctx.fill();
+    const sparkCount = 10;
+    for (let i = 0; i < sparkCount; i++) {
+      const a = i * (Math.PI * 2 / sparkCount) + obj.seed;
+      const reach = dispR * (0.5 + 0.5 * ((i % 3) / 2));
+      const sx = x + Math.cos(a) * reach;
+      const sy = y + Math.sin(a) * reach;
+      const ssize = radius * 0.12 * fade;
+      if (ssize <= 0.2) continue;
+      const sg = ctx.createRadialGradient(sx, sy, 0, sx, sy, ssize);
+      sg.addColorStop(0, `hsla(48, 100%, 92%, ${fade})`);
+      sg.addColorStop(1, `hsla(${hue}, 100%, 60%, 0)`);
+      ctx.fillStyle = sg;
+      ctx.beginPath();
+      ctx.arc(sx, sy, ssize, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+function drawBabyCloudMini(obj, now) {
+  const { x, y, radius, hue, igniting, stage } = obj;
+  if (igniting) { drawBabyCloudIgnition(obj, now); return; }
+  const active = stage === 'preIgnition';
+  ctx.save();
+
+  // Kern: 'preIgnition' bekommt ein sichtbares, langsames Atmen (Helligkeitspuls) als Aktivitätssignal
+  const breathe = active ? 0.5 + 0.5 * Math.sin(now / 900 + obj.seed) : 0;
+  const grad = ctx.createRadialGradient(x, y, 0, x, y, radius);
+  if (active) {
+    grad.addColorStop(0, `hsla(${hue}, 78%, ${64 + breathe * 8}%, ${0.68 + breathe * 0.12})`);
+    grad.addColorStop(0.5, `hsla(${hue}, 75%, 54%, ${0.42 + breathe * 0.1})`);
+    grad.addColorStop(1, `hsla(${hue}, 70%, 42%, 0)`);
+  } else {
+    grad.addColorStop(0, `hsla(${hue}, 65%, 58%, 0.55)`);
+    grad.addColorStop(0.5, `hsla(${hue}, 65%, 48%, 0.32)`);
+    grad.addColorStop(1, `hsla(${hue}, 65%, 40%, 0)`);
+  }
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Sprenkel — Anzahl/Tempo/Lebendigkeit hängt vom Stadium ab: spawn ruhig & spärlich,
+  // preIgnition deutlich dichter, schneller und mit eigenem Flackern pro Sprenkel.
+  const rotSpeed = active ? 0.00009 : 0.00004;
+  const rot = now * rotSpeed + obj.seed;
+  const speckleCount = active ? 18 : 8;
+  ctx.beginPath();
+  for (let i = 0; i < speckleCount; i++) {
+    const a = rot + i * 2.4; // goldener-Winkel-artiger Versatz für lockere Spiralverteilung
+    const rFrac = 0.22 + (i / speckleCount) * 0.68;
+    const r = radius * rFrac;
+    const px = x + Math.cos(a) * r;
+    const py = y + Math.sin(a) * r * 0.86;
+    const flicker = active ? 0.7 + 0.3 * Math.sin(now / 260 + i * 2.1 + obj.seed) : 0.6 + 0.4 * Math.sin(i * 1.7 + obj.seed);
+    const sz = radius * (active ? 0.1 : 0.085) * flicker;
+    ctx.moveTo(px + sz, py);
+    ctx.arc(px, py, sz, 0, Math.PI * 2);
+  }
+  ctx.fillStyle = active
+    ? `hsla(${hue + 10}, 85%, 78%, 0.8)`
+    : `hsla(${hue + 10}, 75%, 72%, 0.65)`;
+  ctx.fill();
+
+  // preIgnition: zusätzlich ein paar kurz aufblitzende Hotspots — sichtbar "aktiver" als die
+  // ruhige Spawn-Version, ohne die volle Wucht der eigentlichen Zündung vorwegzunehmen.
+  if (active) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
+    for (let i = 0; i < 4; i++) {
+      const flashPhase = ((now / 1000 + i * 0.7 + obj.seed) % 1);
+      if (flashPhase > 0.18) continue; // kurzes, seltenes Aufblitzen statt Dauerleuchten
+      const a = rot * 1.3 + i * 1.9;
+      const rFrac = 0.3 + (i / 4) * 0.5;
+      const hx = x + Math.cos(a) * radius * rFrac;
+      const hy = y + Math.sin(a) * radius * rFrac * 0.86;
+      const hAlpha = 1 - flashPhase / 0.18;
+      const hg = ctx.createRadialGradient(hx, hy, 0, hx, hy, radius * 0.16);
+      hg.addColorStop(0, `hsla(46, 95%, 88%, ${0.8 * hAlpha})`);
+      hg.addColorStop(1, `hsla(${hue}, 90%, 60%, 0)`);
+      ctx.fillStyle = hg;
+      ctx.beginPath();
+      ctx.arc(hx, hy, radius * 0.16, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+function drawMiniSun(obj, now, dt) {
+  const { x, y, radius, hue } = obj;
+  if (obj.rotation === undefined) obj.rotation = obj.seed;
+  // "Leichte" Rotation im Ruhezustand, aber deutlich schneller während des Flugs (nach Tap) —
+  // liest sich dann als angetriebene/kämpfende Sonne statt trägem Objekt.
+  const flying = obj.flight && obj.flight.phase === 'fly';
+  // Deutlich höher als zuvor (0.00028) — bei kurzer Flugdauer soll der Partikel-/Korona-Schwenk
+  // (die Kernscheibe selbst ist als radialer Verlauf rotationssymmetrisch, sichtbar wird die Drehung
+  // also nur über Korona-Lappen und Flare-Partikel) klar als aktive Drehung lesbar sein, nicht nur
+  // als leichte Drift.
+  const rotSpeed = flying ? 0.0022 : 0.00003;
+  obj.rotation += rotSpeed * dt;
+
+  ctx.save();
+  drawCorona(obj, now);
+
+  // Kernscheibe: scharfer Rand statt weichem Verlauf — voll deckend bis kurz vor den Rand,
+  // dann schneller Abfall, plus ein dünner Limb-Saum für zusätzliche Kontur.
+  const core = ctx.createRadialGradient(x, y, 0, x, y, radius);
+  core.addColorStop(0, `hsla(${hue}, 55%, 92%, 1)`);
+  core.addColorStop(0.55, `hsla(${hue}, 85%, 70%, 1)`);
+  core.addColorStop(0.86, `hsla(${hue}, 90%, 54%, 1)`);
+  core.addColorStop(0.95, `hsla(${hue}, 90%, 46%, 1)`);
+  core.addColorStop(1, `hsla(${hue}, 90%, 40%, 0)`);
+  ctx.fillStyle = core;
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, Math.PI * 2);
+  ctx.fill();
+
+  if (obj.warp) drawDiscWarpOverlay(obj, now);
+
+  ctx.strokeStyle = `hsla(${hue}, 90%, 78%, 0.55)`;
+  ctx.lineWidth = Math.max(1, radius * 0.035);
+  ctx.beginPath();
+  ctx.arc(x, y, radius * 0.98, 0, Math.PI * 2);
+  ctx.stroke();
+
+  updateAndDrawFlares(obj, dt);
+  ctx.restore();
+}
+
+// ================= DUO-SONNEN (enge Doppelsterne, Vorstufe für Merger-Rezepte) =================
+// Zwei Komponentensterne umkreisen ihr gemeinsames Baryzentrum, verbunden durch eine feurige
+// Plasmabrücke (Massentransfer-Optik, wie bei echten engen Doppelsternen/Kontakt-Binären) plus
+// echten, frei wegfliegenden Funken-Partikeln hinter jeder Komponente (Feuerwerksonne-Optik) —
+// bewusst "feuriger" als die Einzelsonne, weil hier laufend Materie zwischen beiden Sternen
+// ausgetauscht wird. Glow und Funken sind schon Richtung der Farbe des künftigen Merger-Sterns
+// (obj.futureHue) eingefärbt — ein Vorgriff auf die spätere Blue-Straggler-Mechanik.
+const DUO_SPARKS_PER_SIDE = 6;
+
+function newDuoSpark(spawnX, spawnY, centerX, centerY) {
+  // Radial vom Baryzentrum weg, mit Streukegel -> liest sich als Funkenspray, nicht als starre Linie.
+  const baseAngle = Math.atan2(spawnY - centerY, spawnX - centerX);
+  const angle = baseAngle + (Math.random() - 0.5) * 1.3;
+  const speed = 0.012 + Math.random() * 0.022; // px/ms, unabhängig von der Umlaufbewegung
+  return {
+    x: spawnX,
+    y: spawnY,
+    vx: Math.cos(angle) * speed,
+    vy: Math.sin(angle) * speed * 0.82,
+    life: 0,
+    maxLife: 450 + Math.random() * 550,
+    sizeFactor: 0.6 + Math.random() * 0.5,
+  };
+}
+
+function updateAndDrawDuoSparks(sparks, compPos, center, dt, hue, futureHue, compR) {
+  for (const s of sparks) {
+    s.life += dt;
+    if (s.life > s.maxLife) {
+      Object.assign(s, newDuoSpark(compPos.x, compPos.y, center.x, center.y));
+    } else {
+      s.x += s.vx * dt;
+      s.y += s.vy * dt;
+    }
+    const frac = Math.min(1, s.life / s.maxLife);
+    const alpha = (1 - frac) * 0.85;
+    if (alpha <= 0.02) continue;
+    // Wandert im Flug Richtung Zielfarbe (noch nicht voll dort) -> deutet den künftigen Merger-Stern
+    // an, gemischt in RGB statt über den Farbton (siehe mixHueRgba) damit es feurig bleibt statt grün.
+    const mixT = 0.35 + frac * 0.4;
+    const size = Math.max(0.5, compR * 0.3 * s.sizeFactor * (1 - frac * 0.25));
+    const sg = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, size);
+    sg.addColorStop(0, mixHueRgba(hue + 10, futureHue + 10, mixT, 1, 0.85, alpha));
+    sg.addColorStop(0.5, mixHueRgba(hue, futureHue, mixT, 1, 0.68, alpha * 0.7));
+    sg.addColorStop(1, mixHueRgba(hue, futureHue, mixT, 1, 0.55, 0));
+    ctx.fillStyle = sg;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawDuoSun(obj, now, dt) {
+  const { x, y, radius, hue } = obj;
+  const futureHue = obj.futureHue !== undefined ? obj.futureHue : hue;
+  if (obj.rotation === undefined) obj.rotation = obj.seed;
+  // Nochmal deutlich schneller (5x ggü. der letzten Runde) — der Umlauf soll sofort als schnelles,
+  // energiegeladenes Doppelsternsystem lesbar sein.
+  const orbitSpeed = 0.0055;
+  obj.rotation += orbitSpeed * dt;
+
+  const compR = radius * 0.46;
+  const sep = radius * 1.05;
+  const a1 = obj.rotation, a2 = obj.rotation + Math.PI;
+  const p1 = { x: x + Math.cos(a1) * sep * 0.5, y: y + Math.sin(a1) * sep * 0.5 * 0.82 };
+  const p2 = { x: x + Math.cos(a2) * sep * 0.5, y: y + Math.sin(a2) * sep * 0.5 * 0.82 };
+
+  // Feurige Plasmabrücke zwischen beiden Komponenten (Roche-Lobe-Overflow-Optik)
+  const midx = (p1.x + p2.x) / 2, midy = (p1.y + p2.y) / 2;
+  const bridgeLen = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+  const bridgeAngle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+  const bridgePulse = 0.5 + 0.5 * Math.sin(now / 260 + obj.seed);
+  ctx.save();
+  ctx.globalCompositeOperation = 'screen';
+  ctx.save();
+  ctx.translate(midx, midy);
+  ctx.rotate(bridgeAngle);
+  const bgrad = ctx.createLinearGradient(-bridgeLen / 2, 0, bridgeLen / 2, 0);
+  bgrad.addColorStop(0, `hsla(${hue}, 100%, 70%, 0)`);
+  bgrad.addColorStop(0.5, `hsla(${hue + 20}, 100%, 88%, ${0.45 + bridgePulse * 0.25})`);
+  bgrad.addColorStop(1, `hsla(${hue}, 100%, 70%, 0)`);
+  ctx.fillStyle = bgrad;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, bridgeLen / 2, compR * (0.2 + bridgePulse * 0.08), 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+  ctx.restore();
+
+  // Zwei Komponentensterne, je mit eigenem Halo. Der Halo-Ton wandert leicht (nicht voll) Richtung
+  // futureHue — ein dezenter Hinweis auf den künftigen Merger-Stern, ohne die Kernfarbe zu verlieren.
+  // RGB-Mischung (siehe mixHueRgba) statt Hue-Interpolation, damit z.B. Gelb->Blau nicht über Grün läuft.
+  for (const p of [p1, p2]) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
+    const halo = ctx.createRadialGradient(p.x, p.y, compR * 0.6, p.x, p.y, compR * 1.6);
+    halo.addColorStop(0, mixHueRgba(hue, futureHue, 0.22, 0.9, 0.62, 0.32));
+    halo.addColorStop(1, mixHueRgba(hue, futureHue, 0.22, 0.9, 0.5, 0));
+    ctx.fillStyle = halo;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, compR * 1.6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    const core = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, compR);
+    core.addColorStop(0, `hsla(${hue}, 55%, 92%, 1)`);
+    core.addColorStop(0.55, `hsla(${hue}, 85%, 70%, 1)`);
+    core.addColorStop(0.88, `hsla(${hue}, 90%, 52%, 1)`);
+    core.addColorStop(1, `hsla(${hue}, 90%, 44%, 0)`);
+    ctx.fillStyle = core;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, compR, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Echte, frei wegfliegende Funkenpartikel statt winkelstarrer "Schweifpunkte" — jede Komponente
+  // hat ihr eigenes kleines Partikelfeld, das kontinuierlich neu spawnt/verglüht (Feuerwerksonne).
+  if (!obj.sparks1) {
+    obj.sparks1 = [];
+    for (let i = 0; i < DUO_SPARKS_PER_SIDE; i++) {
+      const s = newDuoSpark(p1.x, p1.y, x, y);
+      s.life = Math.random() * s.maxLife; // Startphasen streuen, damit nicht alle synchron aufblitzen
+      obj.sparks1.push(s);
+    }
+  }
+  if (!obj.sparks2) {
+    obj.sparks2 = [];
+    for (let i = 0; i < DUO_SPARKS_PER_SIDE; i++) {
+      const s = newDuoSpark(p2.x, p2.y, x, y);
+      s.life = Math.random() * s.maxLife;
+      obj.sparks2.push(s);
+    }
+  }
+  ctx.save();
+  ctx.globalCompositeOperation = 'screen';
+  const center = { x, y };
+  updateAndDrawDuoSparks(obj.sparks1, p1, center, dt, hue, futureHue, compR);
+  updateAndDrawDuoSparks(obj.sparks2, p2, center, dt, hue, futureHue, compR);
+  ctx.restore();
+}
+
+// ================= TAP-TO-LAUNCH: Sonne fliegt über Rigel/Gürtel zur Barriere =================
+// Aktuell ist nur die rechte Strecke implementiert (Rigel -> Mintaka -> Bellatrix, per Antippen
+// einer der drei Sonnen) — die linke Strecke (Saiph -> Alnitak -> Beteigeuze) existiert hier
+// bewusst noch nicht, die muss laut Jan erst freigeschaltet werden.
+
+// Perspektiv-Skalierung 1:1 aus dem Hauptprogramm übernommen (drift-prototype: FOCAL_DISTANCE=200,
+// perspectiveScale(depthZ) = FOCAL_DISTANCE / max(1, FOCAL_DISTANCE+depthZ)) — dieselbe Formel treibt
+// dort sowohl die Partikelgröße als auch (über die Bildschirm-Projektion) das Tempo-Gefühl beim
+// Reinfallen in den Trichter. Hier: dieselbe Formel skaliert Sonnengröße UND Flug-Tempo während des
+// Flugs, abhängig von der z-Tiefe der Wegpunkte (Rigel/Gürtel/Schulter, siehe STARS[...].z).
+const FOCAL_DISTANCE = 200;
+function perspectiveScale(depthZ) {
+  return FOCAL_DISTANCE / Math.max(1, FOCAL_DISTANCE + depthZ);
+}
+// Wie im Hauptprogramm defensiv geclamped. Untere Grenze auf Jans tatsächlichen z-Bereich
+// (500..1500, siehe STARS) abgestimmt — bei 0.35 wäre schon Rigel (0.286 unclamped) plattgeklemmt
+// und der ganze Gürtel/Kopf-Bereich liefe auf denselben Boden hinaus, ohne noch erkennbar
+// "weiter hinten" zu wirken. Die obere Grenze bleibt als Sicherheitsnetz für später (z<0) stehen.
+function clampedPerspectiveScale(depthZ) {
+  return Math.min(3, Math.max(0.1, perspectiveScale(depthZ)));
+}
+
+function lineCircleIntersection(p1, p2, center, radius) {
+  const dx = p2.x - p1.x, dy = p2.y - p1.y;
+  const fx = p1.x - center.x, fy = p1.y - center.y;
+  const a = dx * dx + dy * dy;
+  const b = 2 * (fx * dx + fy * dy);
+  const c = fx * fx + fy * fy - radius * radius;
+  const disc = b * b - 4 * a * c;
+  if (disc < 0) return null;
+  const sq = Math.sqrt(disc);
+  const t1 = (-b - sq) / (2 * a);
+  const t2 = (-b + sq) / (2 * a);
+  for (const t of [t1, t2]) {
+    if (t >= 0 && t <= 1) return { x: p1.x + dx * t, y: p1.y + dy * t, t };
+  }
+  return null;
+}
+
+function buildRightPath(startX, startY) {
+  const rigelP = project(STARS.rigel.ra, STARS.rigel.dec);
+  const mintakaP = project(STARS.mintaka.ra, STARS.mintaka.dec);
+  const bellatrixP = project(STARS.bellatrix.ra, STARS.bellatrix.dec);
+  const loop = SPECIALS.barnardsLoop;
+  const loopCenter = project(loop.centerRa, loop.centerDec);
+  const loopR = loop.radiusDeg * scale;
+  let intercept = lineCircleIntersection(mintakaP, bellatrixP, loopCenter, loopR);
+  let interceptZ;
+  if (!intercept) {
+    // Falls die Strecke die Barriere geometrisch gerade nicht schneidet: Streckenmitte als Fallback
+    intercept = { x: (mintakaP.x + bellatrixP.x) / 2, y: (mintakaP.y + bellatrixP.y) / 2 };
+    interceptZ = (STARS.mintaka.z + STARS.bellatrix.z) / 2;
+  } else {
+    interceptZ = STARS.mintaka.z + (STARS.bellatrix.z - STARS.mintaka.z) * intercept.t;
+  }
+  return [
+    { x: startX, y: startY, z: 0 },
+    { x: rigelP.x, y: rigelP.y, z: STARS.rigel.z },
+    { x: mintakaP.x, y: mintakaP.y, z: STARS.mintaka.z },
+    { x: intercept.x, y: intercept.y, z: interceptZ },
+  ];
+}
+
+function startFlight(obj) {
+  if (obj.flight) return; // schon unterwegs
+  const path = buildRightPath(obj.x, obj.y);
+  let totalLen = 0;
+  for (let i = 1; i < path.length; i++) {
+    totalLen += Math.hypot(path[i].x - path[i - 1].x, path[i].y - path[i - 1].y);
+  }
+  obj.flight = { path, totalLen, baseSpeed: 0.5, t: 0, phase: 'fly', phaseT: 0 };
+}
+
+function flightSegmentInfo(f, t) {
+  let remaining = t, seg = 0;
+  while (seg < f.path.length - 2) {
+    const segLen = Math.hypot(f.path[seg + 1].x - f.path[seg].x, f.path[seg + 1].y - f.path[seg].y);
+    if (remaining <= segLen) break;
+    remaining -= segLen;
+    seg++;
+  }
+  const a = f.path[seg], b = f.path[seg + 1];
+  const segLen = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+  const frac = Math.min(1, remaining / segLen);
+  return { a, b, frac };
+}
+
+function flightPosition(f) {
+  const { a, b, frac } = flightSegmentInfo(f, f.t);
+  return { x: a.x + (b.x - a.x) * frac, y: a.y + (b.y - a.y) * frac };
+}
+
+function flightDepthZ(f) {
+  const { a, b, frac } = flightSegmentInfo(f, f.t);
+  return a.z + (b.z - a.z) * frac;
+}
+
+function updateFlight(obj, dt) {
+  const f = obj.flight;
+  if (f.phase === 'fly') {
+    // Geschwindigkeitsanpassung nach derselben Perspektiv-Skalierung wie im Hauptprogramm: näher
+    // an der Kamera (negatives z) -> spürbar schneller über den Schirm, weiter weg -> langsamer.
+    const z = flightDepthZ(f);
+    f.t += dt * f.baseSpeed * clampedPerspectiveScale(z);
+    if (f.t >= f.totalLen) { f.t = f.totalLen; f.phase = 'impact'; f.phaseT = 0; }
+  } else if (f.phase === 'impact') {
+    f.phaseT += dt;
+    if (f.phaseT > 420) { f.phase = 'cooldown'; f.phaseT = 0; }
+  } else if (f.phase === 'cooldown') {
+    f.phaseT += dt;
+    if (f.phaseT > 550) obj.flight = null; // zurück in die Reihe, wieder antippbar
+  }
+}
+
+// Kurzer Einschlagblitz an der Barriere statt eines echten Abfangmechanismus (der kommt später).
+function drawFlightImpact(obj) {
+  const f = obj.flight;
+  const pos = f.path[f.path.length - 1];
+  const t = f.phaseT / 420;
+  const arrivalScale = clampedPerspectiveScale(pos.z); // gleiche Skalierung wie während des Flugs
+  const r = Math.max(1, obj.radius * arrivalScale * (1 + t * 2.4));
+  ctx.save();
+  ctx.globalCompositeOperation = 'screen';
+  const grad = ctx.createRadialGradient(pos.x, pos.y, 0, pos.x, pos.y, r);
+  grad.addColorStop(0, `hsla(${obj.hue}, 100%, 92%, ${0.85 * (1 - t)})`);
+  grad.addColorStop(0.5, `hsla(${obj.hue}, 100%, 70%, ${0.4 * (1 - t)})`);
+  grad.addColorStop(1, `hsla(${obj.hue}, 100%, 55%, 0)`);
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(pos.x, pos.y, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function handleE3Tap(tapX, tapY) {
+  for (const obj of E3_OBJECTS) {
+    if (obj.kind !== 'star' || obj.flight) continue;
+    if (Math.hypot(tapX - obj.x, tapY - obj.y) < obj.radius * 1.4) {
+      startFlight(obj);
+      return;
+    }
+  }
+}
+
+function drawE3Label(obj, stagger) {
+  ctx.save();
+  ctx.font = '10px -apple-system, sans-serif';
+  ctx.fillStyle = 'rgba(210,220,255,0.5)';
+  ctx.textAlign = 'center';
+  const baseY = obj.y + obj.radius * 1.4 + 16;
+  ctx.fillText(obj.label, obj.x, baseY + stagger);
+  ctx.restore();
+}
+
+function drawE3Objects(now, dt) {
+  // Beschriftungen der schmalen Baby-Cloud-Objekte liegen dicht beieinander;
+  // dass sie in abwechselnden Zeilen stehen, verhindert Überlappung der Texte.
+  E3_OBJECTS.forEach((obj, i) => {
+    if (obj.seed === undefined) {
+      obj.seed = Math.random() * 1000;
+      if (obj.warp) obj.warpTexture = bakeDiscWarpTexture(96, obj.seed);
+    }
+
+    if (obj.flight) {
+      updateFlight(obj, dt);
+      if (obj.flight && obj.flight.phase === 'impact') drawFlightImpact(obj);
+      if (obj.flight && obj.flight.phase !== 'fly') return; // während Impact/Cooldown nicht in der Reihe zeichnen
+    }
+
+    const rowX = obj.x, rowY = obj.y, rowRadius = obj.radius; // von layoutE3Objects gesetzte Werte
+    if (obj.flight && obj.flight.phase === 'fly') {
+      const pos = flightPosition(obj.flight);
+      const z = flightDepthZ(obj.flight);
+      obj.x = pos.x;
+      obj.y = pos.y;
+      obj.radius = rowRadius * clampedPerspectiveScale(z); // dieselbe Skalierung wie im Hauptprogramm
+    }
+
+    if (obj.kind === 'babyCloud') drawBabyCloudMini(obj, now);
+    else if (obj.kind === 'duo') drawDuoSun(obj, now, dt);
+    else drawMiniSun(obj, now, dt);
+    if (!obj.flight) drawE3Label(obj, i * 11); // jedes Objekt seine eigene Zeile -> nie zwei Labels auf gleicher Höhe
+
+    obj.x = rowX;
+    obj.y = rowY;
+    obj.radius = rowRadius;
+  });
+}
+
+let fpsLastTime = performance.now(), fpsFrames = 0, fpsValue = 0;
+function drawFPS(now) {
+  fpsFrames++;
+  if (now - fpsLastTime >= 500) {
+    fpsValue = Math.round((fpsFrames * 1000) / (now - fpsLastTime));
+    fpsFrames = 0;
+    fpsLastTime = now;
+  }
+  ctx.save();
+  ctx.font = '12px -apple-system, sans-serif';
+  ctx.fillStyle = 'rgba(150,255,180,0.85)';
+  ctx.textAlign = 'left';
+  ctx.fillText(fpsValue + ' FPS', 10, 20);
+  ctx.restore();
+}
+
+let lastFrameTime = null;
+function loop(now) {
+  const dt = lastFrameTime === null ? 16 : Math.min(100, now - lastFrameTime);
+  lastFrameTime = now;
+  drawBackground();
+  drawBarnardsLoop(now);
+  drawRoutes();
+  drawBlackHole(now);
+  for (const key in STARS) drawStar(STARS[key]);
+  layoutE3Objects();
+  drawE3Objects(now, dt);
+  drawFPS(now);
+  requestAnimationFrame(loop);
+}
+
+computeProjection();
+makeBgStars();
+window.addEventListener('resize', () => { computeProjection(); makeBgStars(); });
+
+// Tippen auf eine der drei Sonnen startet den Flug Richtung Barriere (nur rechte Strecke).
+canvas.addEventListener('pointerdown', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  handleE3Tap(e.clientX - rect.left, e.clientY - rect.top);
+});
+
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
