@@ -1,0 +1,720 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Island Map v005</title>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600&family=Patrick+Hand&display=swap" rel="stylesheet">
+<style>
+html,body{margin:0;height:100%;background:#0a3e5e;overflow:hidden;font-family:'Fredoka',system-ui,sans-serif}
+#wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}
+canvas{width:min(100vw,160vh);height:min(62.5vw,100vh);display:block}
+#ui{position:fixed;right:12px;bottom:12px;display:flex;gap:8px}
+button{border:0;border-radius:12px;padding:8px 14px;font:600 14px 'Fredoka',system-ui;background:rgba(255,246,227,.9);color:#3b2a1a;cursor:pointer}
+#loading{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:radial-gradient(ellipse at 50% 55%,#1a7a9a 0%,#0a3e5e 70%);color:#fff6e3;font:400 26px 'Patrick Hand',cursive;transition:opacity .6s;z-index:5}
+#loading .bar{width:220px;height:6px;border-radius:3px;background:rgba(255,255,255,.2);overflow:hidden}
+#loading .bar i{display:block;height:100%;width:0;background:#7fe6d6;transition:width .2s}
+#info{position:fixed;left:12px;bottom:12px;color:rgba(255,246,227,.55);font-size:12px}
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="cv"></canvas></div>
+<div id="ui"><button id="bLabels">Labels: on</button><button id="bTiles">Tile borders: on</button></div>
+<div id="info"></div>
+<div id="loading"><div>Charting the island…</div><div class="bar"><i id="lbar"></i></div></div>
+<script>
+'use strict';
+// =====================================================================
+// Island world map — baked terrain layer + live animation layer.
+// Terrain is computed once (fine 2px grid), cached as an image; only
+// waves, surf, smoke, birds, bats and glows are redrawn every frame.
+// Positions are fractions of the grid (0..1), so detail can change freely.
+// =====================================================================
+const CW = 1600, CH = 1000, GW = 800, GH = 600, S = CW / GW, SC = 400 / GW;   // SC: noise scale vs. the old 400-wide grid
+const TILT = .74, ELEV = 210, SEED = 7;
+const K = Math.min(2, window.devicePixelRatio || 1);
+const VX = .5, VY = .43;
+const LM = {
+  bay: [.47, .765], spring: [.505, .655], palms: [.45, .68], breadfruit: [.565, .675], crabs: [.565, .785], flotsam: [.405, .775],
+  cave: [.372, .488], birds: [.19, .30], lagoon: [.80, .52], riptide: [.47, .90]
+};
+const ESCARP = [[.435, .50], [.375, .80]];
+const THICKET = [[.585, .12], [.635, .82]];
+const REGIONS = {
+  1: { name: 'Castaway Cove', col: '255,236,170' }, 2: { name: 'Booby Cliffs', col: '255,255,255' },
+  3: { name: 'Fire Mountain', col: '255,170,120' }, 4: { name: 'Lagoon & Reef', col: '150,240,230' }
+};
+const cv = document.getElementById('cv');
+cv.width = CW * K; cv.height = CH * K;
+const mainCtx = cv.getContext('2d');
+let ctx = mainCtx;                                      // drawing helpers draw into whatever layer ctx points to
+function layer() { const c = document.createElement('canvas'); c.width = CW * K; c.height = CH * K; const x = c.getContext('2d'); x.setTransform(K, 0, 0, K, 0, 0); return { c, x }; }
+let showLabels = true, showTiles = true;
+
+// ---------- noise ----------
+function mulberry(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+let rnd, perm;
+function initNoise() { rnd = mulberry(SEED * 9973 + 1); perm = new Float32Array(256 * 256); for (let i = 0; i < perm.length; i++) perm[i] = rnd(); }
+function vnoise(x, y) {
+  const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi;
+  const g = (a, b) => perm[((a & 255) * 256) + (b & 255)];
+  const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+  return (g(xi, yi) * (1 - u) + g(xi + 1, yi) * u) * (1 - v) + (g(xi, yi + 1) * (1 - u) + g(xi + 1, yi + 1) * u) * v;
+}
+function fbm(x, y, o) { let s = 0, a = .5, f = 1, n = 0; for (let i = 0; i < (o || 5); i++) { s += a * vnoise(x * f, y * f); n += a; a *= .5; f *= 2.03; } return s / n; }
+function ridged(x, y, o) { let s = 0, a = .5, f = 1, n = 0; for (let i = 0; i < (o || 4); i++) { const r = 1 - Math.abs(vnoise(x * f, y * f) * 2 - 1); s += a * r * r; n += a; a *= .5; f *= 2.1; } return s / n; }
+// cellular noise: distance to nearest and second-nearest feature point → plates and cracks
+function worley(x, y) {
+  const xi = Math.floor(x), yi = Math.floor(y); let f1 = 9, f2 = 9;
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+    const cx = xi + dx, cy = yi + dy;
+    const px = cx + perm[((cx & 255) * 256) + (cy & 255)], py = cy + perm[(((cx + 37) & 255) * 256) + ((cy + 91) & 255)];
+    const d = Math.hypot(px - x, py - y);
+    if (d < f1) { f2 = f1; f1 = d; } else if (d < f2) f2 = d;
+  }
+  return [f1, f2];
+}
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const lerp = (a, b, t) => a + (b - a) * t;
+const smooth = (a, b, v) => { const t = clamp((v - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+function mix(c1, c2, t) { return [lerp(c1[0], c2[0], t), lerp(c1[1], c2[1], t), lerp(c1[2], c2[2], t)]; }
+function hex(h) { return [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)]; }
+function segDist(px, py, a, b) {
+  const dx = b[0] - a[0], dy = b[1] - a[1], L = dx * dx + dy * dy;
+  const t = clamp(((px - a[0]) * dx + (py - a[1]) * dy) / L, 0, 1);
+  const qx = a[0] + t * dx, qy = a[1] + t * dy;
+  return { d: Math.hypot(px - qx, py - qy), side: Math.sign(dx * (py - a[1]) - dy * (px - a[0])), t };
+}
+
+// ---------- terrain ----------
+let H, moist, feat, region, seeds, lavaAmt, tangleAmt, plat, caveAmt, cellReg;
+const F_LAVAFIELD = 1, F_THICKET = 2, F_STREAM = 4, F_GUANO = 8, F_LAVA = 16, F_RIM = 32, F_ESC = 64, F_CAVERIM = 128;
+function volR(nx, ny) { return Math.hypot((nx - VX) / .13, (ny - VY) / .115); }
+function volRW(nx, ny) { return volR(nx, ny) + (fbm(nx * 7 + 13, ny * 7 + 2, 3) - .5) * .7; }
+function escSigned(nx, ny) {
+  const wx = nx - Math.sin(ny * 21 + 1) * .01 - (fbm(ny * 8, 9, 3) - .5) * .03;
+  const a = ESCARP[0], b = ESCARP[1], dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy);
+  return (dx * (ny - a[1]) - dy * (wx - a[0])) / L;
+}
+function plateauMask(nx, ny) { return smooth(-.004, .007, escSigned(nx, ny)) * smooth(1.45, 1.75, volRW(nx, ny)); }
+function thicketSigned(nx, ny) {
+  const wx = nx - Math.sin(ny * 26) * .012 - (fbm(ny * 9, 5, 3) - .5) * .03;
+  const a = THICKET[0], b = THICKET[1], dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy);
+  return -(dx * (ny - a[1]) - dy * (wx - a[0])) / L;
+}
+function buildTerrain() {
+  const N = GW * GH;
+  H = new Float32Array(N); moist = new Float32Array(N); feat = new Uint8Array(N);
+  lavaAmt = new Float32Array(N); tangleAmt = new Float32Array(N); plat = new Float32Array(N); caveAmt = new Float32Array(N);
+  for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) {
+    const nx = x / GW, ny = y / GH, i = y * GW + x;
+    const wx = (fbm(nx * 3 + 11, ny * 3 + 3, 4) - .5) * .22, wy = (fbm(nx * 3 + 41, ny * 3 + 17, 4) - .5) * .22;
+    const dx = (nx - .5 + wx) / .40, dy = (ny - .48 + wy) / .36;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    let h = (1 - Math.pow(d, 1.9)) * .30 + (fbm(nx * 6, ny * 6, 5) - .5) * .24;
+    // volcano: cone, rim, crater, radial erosion gullies with sharp ribs
+    const vr = volR(nx, ny), ang = Math.atan2(ny - VY, nx - VX);
+    h += Math.exp(-vr * 2.0) * 1.15;
+    const rimNoise = .85 + .3 * fbm(Math.cos(ang) * 2 + 50, Math.sin(ang) * 2 + 50, 2);
+    h += Math.exp(-Math.pow((vr - .12) / .04, 2)) * .10 * rimNoise;
+    h -= Math.exp(-Math.pow(vr / .10, 2)) * .42;
+    if (Math.abs(vr - .12) < .03) feat[i] |= F_RIM;
+    const gully = Math.abs(Math.sin(ang * 13 + fbm(nx * 5, ny * 5, 3) * 5));
+    h += (Math.pow(gully, .6) - .62) * .075 * smooth(.12, .3, vr) * smooth(1.7, .8, vr);
+    h += (ridged(nx * 22, ny * 22, 3) - .45) * .05 * smooth(.2, .5, vr) * smooth(1.6, 1.0, vr);
+    // the start bay
+    const br = Math.hypot((nx - LM.bay[0]) / .055, (ny - LM.bay[1]) / .04);
+    h -= Math.exp(-br * br) * .14;
+    // lagoon
+    const lr = Math.hypot((nx - LM.lagoon[0]) / .08, (ny - LM.lagoon[1]) / .10);
+    h -= Math.exp(-lr * lr) * .22;
+    // Booby Cliffs plateau, with rough rocky edges
+    const pm = plateauMask(nx, ny); plat[i] = pm;
+    if (h > -.03) {
+      h += pm * .12 + pm * (1 - pm) * 4 * (ridged(nx * 40, ny * 40, 3) - .5) * .05;
+      if (pm > .12 && pm < .88 && h > .02) feat[i] |= F_ESC;
+    }
+    // bird rocks
+    const bc = Math.hypot((nx - LM.birds[0]) / .07, (ny - LM.birds[1]) / .05);
+    if (bc < 1.4) { h += Math.exp(-bc * bc) * .16 + (ridged(nx * 50, ny * 50, 3) - .5) * .04 * Math.exp(-bc * bc); if (h > .05 && bc < 1.1) feat[i] |= F_GUANO; }
+    // bat cave: an outcrop on the mountain's south-west flank with a dark mouth under it
+    const cr = Math.hypot((nx - LM.cave[0]) / .014, (ny - LM.cave[1]) / .010);
+    const crTop = Math.hypot((nx - LM.cave[0]) / .022, (ny - (LM.cave[1] - .012)) / .013);
+    h += Math.exp(-crTop * crTop) * .06;
+    if (cr < 1) caveAmt[i] = smooth(1, .25, cr);
+    else if (crTop < 1.5) feat[i] |= F_CAVERIM;
+    // old lava field
+    {
+      const vrw = volRW(nx, ny);
+      const band = smooth(.95, 1.2, vrw) * smooth(1.85, 1.45, vrw);
+      const south = smooth(.25, .6, Math.sin(ang)) * smooth(.75, .45, Math.abs(Math.cos(ang)));
+      const amt = band * south * (.55 + .9 * fbm(nx * 10 + 3, ny * 10, 3)) - .45;
+      if (amt > 0 && h > .06) { lavaAmt[i] = clamp(amt * 2.2, 0, 1); if (lavaAmt[i] > .3) feat[i] |= F_LAVAFIELD; h += lavaAmt[i] * (ridged(nx * 60, ny * 60, 2) - .5) * .015; }
+    }
+    // fresh lava flow
+    const lf = segDist(nx, ny, [VX + .04, VY - .035], [VX + .14, VY - .16]);
+    if (lf.d < .006 + .004 * fbm(nx * 30, ny * 30, 2) && h > .02) feat[i] |= F_LAVA;
+    // the tangle
+    const th = segDist(nx - Math.sin(ny * 26) * .012 - (fbm(ny * 9, 5, 3) - .5) * .03, ny, THICKET[0], THICKET[1]);
+    {
+      const amt = (1 - th.d / (.03 + .02 * fbm(nx * 14 + 8, ny * 14, 3))) * smooth(0, .03, th.t) * smooth(1, .97, th.t) * smooth(.9, 1.3, vr);
+      if (amt > 0 && h > .03) { tangleAmt[i] = clamp(amt * 1.6, 0, 1); if (tangleAmt[i] > .35) feat[i] |= F_THICKET; }
+    }
+    // stream
+    const wig = (fbm(ny * 25, 3, 2) - .5) * .012;
+    const st2 = segDist(nx - wig, ny, LM.spring, [LM.bay[0] + .01, LM.bay[1] - .03]);
+    if ((st2.d < .0035 || Math.hypot((nx - LM.spring[0]) / .014, (ny - LM.spring[1]) / .011) < 1) && h > 0) feat[i] |= F_STREAM;
+    h -= .06;
+    // the plateau meets the sea as a sheer cliff: no sand, deeper water at its foot
+    if (pm > .35) { if (h >= 0 && h < .12) h = .12 + h * .5; else if (h < 0 && h > -.05) h = -.05 + h * .3; }
+    H[i] = h;
+    moist[i] = fbm(nx * 4 + 70, ny * 4 + 70, 4) + (ny - .5) * .3 - Math.max(0, (nx - .5)) * .2;
+  }
+}
+const at = (x, y) => H[clamp(y, 0, GH - 1) * GW + clamp(x, 0, GW - 1)];
+const atf = (fx, fy) => at((fx * GW) | 0, (fy * GH) | 0);
+
+// ---------- regions & tiles ----------
+const TILE_MIN_H = -.135, TILE_AREA = 1650 * (GW / 400) * (GH / 300);
+function cellRegion(x, y) {
+  const i = y * GW + x, h = H[i], nx = x / GW, ny = y / GH;
+  if (h < TILE_MIN_H) return 0;
+  if (h < -.02) return 5;
+  if (plat[i] > .5) return 2;
+  const vr = volRW(nx, ny), east = thicketSigned(nx, ny) > -.012;
+  if (vr < 1.7) return 3;
+  if (east) return 4;
+  if (ny < VY + .02) return 3;
+  return 1;
+}
+let REG_C = {}, BORDER_C = {};
+const regOf = r => r === 5 ? 4 : r;
+function buildTiles() {
+  cellReg = new Int8Array(GW * GH);
+  const cells = { 1: [], 2: [], 3: [], 4: [], 5: [] };
+  for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) { const r = cellRegion(x, y); cellReg[y * GW + x] = r; if (r) cells[r].push(y * GW + x); }
+  seeds = [];
+  [1, 2, 3, 4, 5].forEach(r => {
+    const list = cells[r]; if (!list.length) return;
+    const n = Math.max(2, Math.round(list.length / (TILE_AREA * { 1: .42, 2: 1, 3: .85, 4: .85, 5: 2.4 }[r])));   // the start region gets small, many tiles
+    const minD = Math.sqrt(list.length / n) * .75;
+    let placed = 0, tries = 0;
+    while (placed < n && tries < 20000) {
+      tries++;
+      const c = list[(rnd() * list.length) | 0], x = c % GW, y = (c / GW) | 0;
+      if (seeds.some(s => s.reg === r && Math.hypot(s.x - x, s.y - y) < minD)) continue;
+      seeds.push({ x, y, reg: r, water: r === 5 }); placed++;
+    }
+  });
+  const byReg = { 1: [], 2: [], 3: [], 4: [], 5: [] };
+  seeds.forEach((s, k) => byReg[s.reg].push(k));
+  region = new Int16Array(GW * GH).fill(-1);
+  for (let it = 0; it < 4; it++) {
+    const sx = new Float64Array(seeds.length), sy = new Float64Array(seeds.length), sn = new Float64Array(seeds.length);
+    for (let i = 0; i < GW * GH; i++) {
+      const r = cellReg[i]; if (!r) continue;
+      const x = i % GW, y = (i / GW) | 0, ks = byReg[r];
+      let best = -1, bd = 1e12;
+      for (let j = 0; j < ks.length; j++) { const s = seeds[ks[j]], dx = s.x - x, dy = s.y - y, dd = dx * dx + dy * dy; if (dd < bd) { bd = dd; best = ks[j]; } }
+      region[i] = best;
+      sx[best] += x; sy[best] += y; sn[best]++;
+    }
+    if (it < 3) seeds.forEach((s, k) => { if (sn[k]) { s.x = sx[k] / sn[k]; s.y = sy[k] / sn[k]; } });
+  }
+  REG_C = {}; BORDER_C = {};
+  for (let i = 0; i < GW * GH; i++) {
+    const r = cellReg[i]; if (!r || r === 5) continue;
+    const x = i % GW, y = (i / GW) | 0;
+    (REG_C[r] = REG_C[r] || [0, 0, 0]); REG_C[r][0] += x; REG_C[r][1] += y; REG_C[r][2]++;
+    if (x < GW - 1 && y < GH - 1) for (const o of [cellReg[i + 1], cellReg[i + GW]]) {
+      if (o && o !== 5 && o !== r) { const key = Math.min(r, o) + '-' + Math.max(r, o); (BORDER_C[key] = BORDER_C[key] || [0, 0, 0]); BORDER_C[key][0] += x; BORDER_C[key][1] += y; BORDER_C[key][2]++; }
+    }
+  }
+}
+
+// ---------- colours ----------
+const COL = {
+  deep: hex('#0a3e5e'), sand: hex('#f2dcaa'), sandWet: hex('#d8bb80'),
+  lowland: hex('#8cc152'), grass: hex('#6fae45'), jungle: hex('#2f7a40'), jungleDeep: hex('#215a30'),
+  high: hex('#5f7a3c'), rock: hex('#8a7058'), rockDark: hex('#5a4840'), ash: hex('#4a403c'), crater: hex('#2b211e'),
+  basalt: hex('#353133'), tangle: hex('#1d3f26')
+};
+const WATER = [[0, '#d3f7e8'], [.012, '#a6f0de'], [.035, '#5fdccb'], [.06, '#2cc3c6'], [.09, '#1aa6c2'], [.13, '#1484ad'], [.19, '#0f5f8a'], [.28, '#0a3e5e']].map(([d, c]) => [d, hex(c)]);
+function waterColor(h, x, y) {
+  const d = -h;
+  let c = WATER[WATER.length - 1][1];
+  for (let k = 0; k < WATER.length - 1; k++) if (d < WATER[k + 1][0]) { c = mix(WATER[k][1], WATER[k + 1][1], (d - WATER[k][0]) / (WATER[k + 1][0] - WATER[k][0])); break; }
+  if (d < .10) {
+    const sandPatch = fbm(x * .06 + 5, y * .06, 3);
+    if (sandPatch > .6) c = mix(c, hex('#c8f3e2'), clamp((sandPatch - .6) * 4, 0, .45) * (1 - d / .1));
+    const grass = fbm(x * .08 + 20, y * .08 + 9, 3);
+    if (grass > .6 && d > .015) c = mix(c, hex('#2f9e8a'), clamp((grass - .6) * 3, 0, .4));
+    const ca = (fbm(x * .05, y * .05 + 3, 3) * 18) % 1;
+    if (ca < .07) c = mix(c, [255, 255, 255], .14 * (1 - d / .1));
+  }
+  if (d > .08 && d < .14) {
+    const n = fbm(x * .12, y * .12, 3), chan = fbm(x * .03 + 40, y * .03, 2);
+    if (chan > .36) {
+      if (n > .48) c = mix(hex('#38c9c4'), hex('#8fe8d6'), clamp((n - .48) * 5, 0, 1));
+      if (n > .58) {
+        const pick = vnoise(x * .8 + 3, y * .8);
+        const coral = pick > .7 ? hex('#ff7f8f') : pick > .45 ? hex('#ffb07a') : pick > .25 ? hex('#c58cff') : hex('#ffe09a');
+        c = mix(c, coral, .6 * clamp((n - .58) * 6, 0, 1));
+      }
+    }
+  }
+  return c;
+}
+// rock texture: plates (worley) with darker cracks and fine grit
+function rockTex(c, x, y, strength, freq) {
+  const [f1, f2] = worley(x * freq, y * freq), edge = f2 - f1;
+  let k = 1 + (.5 - f1) * .25 * strength;
+  if (edge < .09) k *= 1 - (1 - edge / .09) * .35 * strength;
+  k *= 1 + (vnoise(x * 1.3, y * 1.3) - .5) * .18 * strength;
+  return [c[0] * k, c[1] * k, c[2] * k];
+}
+function landColor(h, m, slope, f, x, y, i) {
+  let c;
+  if (h < .025) c = mix(COL.sandWet, COL.sand, h / .025);
+  else if (h < .05) c = mix(COL.sand, COL.lowland, (h - .025) / .025);
+  else if (h < .34) {
+    const j = clamp((m - .42) * 3.2 + (h - .05) * 2.2, 0, 1);
+    c = mix(mix(COL.lowland, COL.grass, (h - .05) / .29), mix(COL.jungle, COL.jungleDeep, (h - .05) / .29), j);
+  }
+  else if (h < .48) c = mix(COL.jungleDeep, COL.high, (h - .34) / .14);
+  else if (h < .66) c = mix(COL.high, COL.rock, (h - .48) / .18);
+  else c = mix(COL.rock, COL.ash, clamp((h - .66) / .2, 0, 1));
+  let rocky = 0;
+  if (h > .06 && slope > .028) { const r = clamp((slope - .028) * 30, 0, .85); c = mix(c, h > .4 ? COL.rockDark : COL.rock, r); rocky = Math.max(rocky, r); }
+  if (h > .5) rocky = Math.max(rocky, smooth(.5, .7, h));
+  if (lavaAmt[i] > 0) {
+    // cracked basalt plates with faintly glowing seams
+    const [f1, f2] = worley(x * .22, y * .26), edge = f2 - f1;
+    let b = mix(COL.basalt, hex('#4a3b36'), clamp(f1 * 1.3, 0, 1));
+    if (edge < .07) b = mix(b, hex('#c2461c'), (1 - edge / .07) * .55);
+    c = mix(c, b, lavaAmt[i] * .92);
+  }
+  if (tangleAmt[i] > 0) c = mix(c, COL.tangle, tangleAmt[i] * .7);
+  if (f & F_ESC) { c = mix(c, mix(hex('#5d4c40'), hex('#80705c'), vnoise(x * .8, y * .8)), .65); rocky = 1; }
+  if (f & F_CAVERIM) { c = mix(c, hex('#6b5a4c'), .7); rocky = 1; }
+  if (f & F_GUANO) { c = mix(c, mix(COL.rock, hex('#9b9284'), .5), .55); rocky = 1; if (vnoise(x * 1.7, y * 1.7) > .78) c = mix(c, [248, 246, 238], .7); }
+  if (rocky > 0) c = rockTex(c, x, y, rocky, h > .5 ? .35 : .45);
+  if (caveAmt[i] > 0) c = mix(c, hex('#0b0706'), caveAmt[i] * .95);
+  return c;
+}
+
+// ---------- projection ----------
+function proj(x, y, h) { return [x * S, 40 + (y * S - 48) * TILT - Math.max(h, 0) * ELEV]; }
+function pf(fx, fy) { return proj(fx * GW, fy * GH, Math.max(0, atf(fx, fy))); }
+function rgbs(c, k) { return 'rgb(' + (clamp(c[0] * k, 0, 255) | 0) + ',' + (clamp(c[1] * k, 0, 255) | 0) + ',' + (clamp(c[2] * k, 0, 255) | 0) + ')'; }
+
+// ---------- baked base layer ----------
+let base, borders, labels;
+const anim = { coast: [], surf: [], wavelets: [], curls: [], birds: [], bats: [], deep: [], water: [], glints: [] };
+function renderBase() {
+  base = layer(); ctx = base.x;
+  const r2 = mulberry(4242);
+  ctx.fillStyle = rgbs(COL.deep, 1); ctx.fillRect(0, 0, CW, CH);
+  const decor = [];
+  const cellH = S * TILT + .8;
+  for (let y = 0; y < GH; y++) {
+    for (let x = 0; x < GW; x++) {
+      const i = y * GW + x, h = H[i], f = feat[i], xs = x * SC, ys = y * SC;
+      const dx = (at(x + 1, y) - at(x - 1, y)) / (SC * 2), dy = (at(x, y + 1) - at(x, y - 1)) / (SC * 2);
+      const slope = Math.hypot(dx, dy) / 2;
+      let shade = clamp(1 + (-dx * 1.1 - dy * 1.8) * 11, .42, 1.5), c;
+      const [px, py] = proj(x, y, h);
+      if (h < 0) {
+        c = waterColor(h, xs, ys);
+        ctx.fillStyle = rgbs(c, 1); ctx.fillRect(px, py, S + .5, cellH);
+        if (h > -.03 && (at(x + 1, y) >= 0 || at(x - 1, y) >= 0 || at(x, y + 1) >= 0 || at(x, y - 1) >= 0)) {
+          ctx.fillStyle = 'rgba(255,255,255,.55)'; ctx.fillRect(px, py, S + .5, cellH);
+          if ((x + y) % 2 === 0) {     // coast point for the animated surf, with a normal pointing out to sea
+            let gx = at(x + 2, y) - at(x - 2, y), gy = at(x, y + 2) - at(x, y - 2); const L = Math.hypot(gx, gy) || 1;
+            anim.coast.push({ x, y, nx: -gx / L, ny: -gy / L, ph: (fbm(xs * .05, ys * .05, 2) * 6), rp: Math.random(), cliff: plat[i] > .35 });
+          }
+        }
+        if (h < -.103 && h > -.12 && fbm(xs * .1 + 9, ys * .1, 2) > .47 && fbm(xs * .03 + 40, ys * .03, 2) > .36 && (x + y) % 2 === 0) anim.surf.push({ x, y });
+        continue;
+      }
+      if (f & F_STREAM) { c = hex('#4fc8e0'); shade = 1.05; }
+      else c = landColor(h, moist[i], slope, f, xs, ys, i);
+      const vr = volR(x / GW, y / GH);
+      if (vr < .1) { c = mix(COL.crater, hex('#ff4a12'), clamp(1 - vr / .085, 0, 1)); shade = 1 + clamp(1 - vr / .085, 0, 1) * .3; }
+      if (f & F_RIM) shade *= 1.12;
+      if (f & F_LAVA) { c = mix(hex('#ff5a1a'), hex('#ffcf4a'), vnoise(xs * .5, ys * .5)); shade = 1.15; }
+      if (caveAmt[i] > 0) shade = lerp(shade, 1, caveAmt[i]);
+      ctx.fillStyle = rgbs(c, shade); ctx.fillRect(px, py, S + .5, cellH);
+      const drop = (h - Math.max(0, at(x, y + 1))) * ELEV;
+      if (drop > 0) {
+        const cliff = clamp((drop - 9) / 10, 0, 1);
+        let wc = mix(c, (f & F_GUANO) ? hex('#b3a896') : hex('#6e5646'), cliff * .75);
+        if (cliff > 0) wc = rockTex(wc, xs * 1.6, ys, cliff, .9);     // vertical-ish rock streaks on walls
+        ctx.fillStyle = rgbs(wc, shade * (1 - cliff * .2)); ctx.fillRect(px, py + S * TILT - .4, S + .5, drop + 1.2);
+        if (cliff > .5) { ctx.fillStyle = 'rgba(30,20,15,' + (.25 * cliff) + ')'; ctx.fillRect(px, py + S * TILT + drop * .55, S + .5, drop * .45 + 1); }
+      }
+      // decoration (densities are per old-size cell, so scale down)
+      const q = SC * SC * 1.3;
+      if (!(f & (F_LAVA | F_STREAM)) && caveAmt[i] === 0 && vr > 1.0) {
+        const nx = x / GW, ny = y / GH;
+        const rockyCell = (f & (F_ESC | F_GUANO | F_CAVERIM | F_LAVAFIELD)) || (h > .45 && slope > .03);
+        if (rockyCell) { if (r2() < .028 * q * (lavaAmt[i] > .3 ? 1.6 : 1)) decor.push(dec(x, y, h, 'rock', r2)); }
+        else if (tangleAmt[i] > .15) { if (r2() < .14 * q * tangleAmt[i]) decor.push(dec(x, y, h, 'tangle', r2)); }
+        else {
+          const dens = fbm(xs * .05 + 31, ys * .05 + 7, 3);
+          const inPalms = Math.hypot((nx - LM.palms[0]) / .06, (ny - LM.palms[1]) / .05) < 1;
+          const inFruit = Math.hypot((nx - LM.breadfruit[0]) / .035, (ny - LM.breadfruit[1]) / .03) < 1;
+          if (inFruit && h > .03) { if (r2() < .07 * q) decor.push(dec(x, y, h, 'breadfruit', r2)); }
+          else if (inPalms && h > .02) { if (r2() < .08 * q) decor.push(dec(x, y, h, 'palm', r2)); }
+          else if (h > .05 && h < .32 && r2() < .045 * q * dens * dens * 3) decor.push(dec(x, y, h, moist[i] > .47 || h > .16 ? 'tree' : 'palm', r2));
+          else if (h >= .012 && h < .05 && r2() < .03 * q) decor.push(dec(x, y, h, 'palm', r2));
+        }
+      }
+    }
+    for (let k = decor.length - 1; k >= 0; k--) if (decor[k].y === y) { drawDecor(decor[k]); decor.splice(k, 1); }
+  }
+  drawCrabs(r2); drawFlotsam(); drawBoobies(r2); drawSpringGlint(); drawCaveLip();
+  drawWreck(); drawCrater(); drawStartMarker();
+  setupAnim(r2);
+}
+
+// ---------- sprites ----------
+function dec(x, y, h, t, r) { return { x: x + (r() - .5) * 2, y, h, t, v: (r() * 4) | 0, s: .82 + r() * .4, k: r() }; }
+function shadow(px, py, w) { ctx.fillStyle = 'rgba(20,50,25,.33)'; ctx.beginPath(); ctx.ellipse(px + 3, py + 4, w, w * .42, 0, 0, Math.PI * 2); ctx.fill(); }
+function blob(x, y, r, col) { ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); }
+function poly(pts, col) { ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(pts[0], pts[1]); for (let k = 2; k < pts.length; k += 2) ctx.lineTo(pts[k], pts[k + 1]); ctx.closePath(); ctx.fill(); }
+const TREE_COLS = [['#2b7039', '#3c8a46'], ['#1f5a2e', '#2f7038'], ['#346f2c', '#4a8a3a'], ['#245e3a', '#2f7a4c']];
+const ROCK_COLS = [['#7c6a5a', '#9a8670', '#4e4238'], ['#6a6260', '#8c8480', '#403a38'], ['#806c58', '#a08a72', '#54463a'], ['#5c5450', '#7a726c', '#36302e']];
+function drawDecor(d) {
+  const [px, py] = proj(d.x, d.y, d.h), s = d.s;
+  ctx.save(); ctx.translate(px, py); ctx.scale(s, s);
+  if (d.t === 'tree') {
+    const [c1, c2] = TREE_COLS[(d.v + (d.h > .2 ? 1 : 0)) % 4];
+    if (d.v === 0) { shadow(0, 0, 7); blob(0, -3, 6, c1); blob(-2, -5, 3, 'rgba(255,255,255,.12)'); }
+    else if (d.v === 1) { shadow(0, 0, 9); blob(-4, -2, 4.5, c1); blob(4, -2, 4.5, c1); blob(0, -6, 5, c2); blob(-1, -8, 2.2, 'rgba(255,255,255,.12)'); }
+    else if (d.v === 2) { shadow(0, 0, 6); ctx.fillStyle = '#5a4128'; ctx.fillRect(-.8, -7, 1.6, 7); blob(0, -10, 5, c1); blob(-3, -8, 3.5, c1); blob(3, -8, 3.5, c2); blob(-1, -12, 2, 'rgba(255,255,255,.14)'); }
+    else { shadow(0, 0, 9); ctx.fillStyle = '#5a4128'; ctx.fillRect(-.7, -4, 1.4, 4); ctx.fillStyle = c1; ctx.beginPath(); ctx.ellipse(0, -6, 9, 4, 0, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = c2; ctx.beginPath(); ctx.ellipse(-1, -7.5, 6, 2.4, 0, 0, Math.PI * 2); ctx.fill(); }
+  } else if (d.t === 'rock') {
+    const [mid, lit, dark] = ROCK_COLS[(d.v + ((d.k * 10) | 0)) % 4];
+    ctx.fillStyle = 'rgba(15,10,8,.35)'; ctx.beginPath(); ctx.ellipse(2, 1.5, 6, 2.2, 0, 0, Math.PI * 2); ctx.fill();
+    if (d.v === 0) { poly([-5, 0, -4, -4, 0, -6, 4, -4, 5, 0], mid); poly([-4, -4, 0, -6, 1, -3, -3, -1], lit); poly([1, -3, 4, -4, 5, 0, 0, 0], dark); }
+    else if (d.v === 1) { poly([-6, 0, -5, -3, -1, -4, 1, 0], mid); poly([0, 0, 1, -5, 4, -7, 6, -4, 5, 0], mid); poly([1, -5, 4, -7, 4, -4, 2, -3], lit); poly([-5, -3, -1, -4, -2, -2], lit); poly([4, -4, 6, -4, 5, 0, 3, 0], dark); }
+    else if (d.v === 2) { poly([-7, 0, -6, -2, 6, -3, 7, 0], mid); poly([-6, -2, 6, -3, 4, -1.5, -5, -1], lit); poly([4, -1.5, 6, -3, 7, 0, 4, 0], dark); }
+    else { poly([-4, 0, -2, -8, 1, -3, 3, -6, 5, 0], mid); poly([-2, -8, 1, -3, -1, -1, -3, -2], lit); poly([3, -6, 5, 0, 2, 0], dark); }
+  } else if (d.t === 'breadfruit') {
+    shadow(0, 1, 9); blob(0, -4, 8 - d.v * .6, '#4f9a3a'); blob(-2, -6, 4.5, '#6dbb4a'); if (d.v % 2) blob(4, -6, 3.5, '#5aa83f');
+    [[-3, -1], [3, -3], [1, 1], [-1, -6]].slice(0, 2 + d.v % 3).forEach(([a, b]) => blob(a, -4 + b, 1.5, '#c7e06a'));
+  } else if (d.t === 'tangle') {
+    blob(0, -2, 5.5, ['#163521', '#1a3d26', '#14301e', '#1d4229'][d.v]);
+    ctx.strokeStyle = '#2c5a2c'; ctx.lineWidth = 1.2; ctx.beginPath();
+    if (d.v < 2) { ctx.moveTo(-6, -1); ctx.quadraticCurveTo(-2, -9, 5, -3); ctx.moveTo(-4, -5); ctx.quadraticCurveTo(1, 1, 6, -6); }
+    else { ctx.moveTo(-6, -4); ctx.quadraticCurveTo(0, -10, 6, -1); ctx.moveTo(-5, 0); ctx.quadraticCurveTo(-1, -6, 4, -8); }
+    ctx.stroke(); if (d.v === 3) blob(2, -6, 1.2, '#c0467a');
+  } else {
+    const lean = [0, -4, 4, 2][d.v], tall = 10 + d.k * 3;
+    const palm = (bx, lx, hgt, fronds) => {
+      ctx.strokeStyle = '#7a5a38'; ctx.lineWidth = 1.6; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(bx, 2); ctx.quadraticCurveTo(bx + lx * .2, -hgt * .5, bx + lx, -hgt); ctx.stroke();
+      ctx.strokeStyle = d.k > .5 ? '#3f8f3f' : '#4a9a40'; ctx.lineWidth = 2;
+      for (let a = 0; a < fronds; a++) { const an = -Math.PI + a * (Math.PI * 1.1 / (fronds - 1)) - .05; ctx.beginPath(); ctx.moveTo(bx + lx, -hgt); ctx.quadraticCurveTo(bx + lx + Math.cos(an) * 4, -hgt - 3 + Math.sin(an) * 2, bx + lx + Math.cos(an) * 8, -hgt + 2 + Math.sin(an) * 3); ctx.stroke(); }
+      if (d.k > .6) { blob(bx + lx - 1, -hgt + 1.5, 1.1, '#6b4a2b'); blob(bx + lx + 1, -hgt + 1.8, 1.1, '#6b4a2b'); }
+    };
+    if (d.v === 3) { palm(-2, -3, tall * .85, 5); palm(2, lean, tall, 6); } else palm(0, lean, tall, 5 + (d.v % 2));
+  }
+  ctx.restore();
+}
+function drawCaveLip() {
+  // a soft inner shadow and a lit lip so the mouth sits *in* the rock
+  const [px, py] = pf(LM.cave[0], LM.cave[1] + .004);
+  const g = ctx.createRadialGradient(px, py - 4, 1, px, py - 2, 16); g.addColorStop(0, 'rgba(0,0,0,.55)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(px, py - 3, 15, 9, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = 'rgba(190,165,135,.55)'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.ellipse(px, py - 1, 11, 4, 0, .1, Math.PI - .1); ctx.stroke();
+}
+function drawCrater() {
+  let best = null;
+  const r = Math.round(12 / SC);
+  for (let y = (VY * GH - r) | 0; y < VY * GH + r; y++) for (let x = (VX * GW - r) | 0; x < VX * GW + r; x++) { const q = proj(x, y, at(x, y)); if (!best || q[1] < best[1]) best = q; }
+  const px = VX * GW * S, py = best[1] + 4;
+  ctx.save(); ctx.translate(px, py + 6);
+  const rg = ctx.createRadialGradient(0, 0, 10, 0, 0, 30); rg.addColorStop(0, '#5a463c'); rg.addColorStop(1, 'rgba(74,64,60,0)');
+  ctx.fillStyle = rg; ctx.beginPath(); ctx.ellipse(0, 0, 32, 12, 0, 0, Math.PI * 2); ctx.fill();
+  const g = ctx.createRadialGradient(0, 1, 0, 0, 1, 18); g.addColorStop(0, '#2a1a14'); g.addColorStop(1, '#120b09');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(0, 1, 19, 6.5, 0, 0, Math.PI * 2); ctx.fill();
+  const lg = ctx.createRadialGradient(2, 2, 0, 2, 2, 11); lg.addColorStop(0, '#fff2a0'); lg.addColorStop(.35, '#ffb02e'); lg.addColorStop(1, 'rgba(255,70,20,0)');
+  ctx.fillStyle = lg; ctx.beginPath(); ctx.ellipse(2, 2, 12, 4, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,200,150,.55)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.ellipse(0, 0, 24, 9, 0, Math.PI * 1.05, Math.PI * 1.95); ctx.stroke();
+  ctx.strokeStyle = 'rgba(30,20,18,.8)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.ellipse(0, 0, 24, 9, 0, Math.PI * .05, Math.PI * .95); ctx.stroke();
+  ctx.restore();
+  anim.crater = [px, py + 8];
+}
+function drawCrabs(r) {
+  for (let k = 0; k < 10; k++) {
+    const fx = LM.crabs[0] + (r() - .5) * .05, fy = LM.crabs[1] + (r() - .5) * .02;
+    const h = atf(fx, fy); if (h < 0 || h > .05) continue;
+    const [px, py] = proj(fx * GW, fy * GH, h);
+    ctx.fillStyle = '#e4572e'; ctx.beginPath(); ctx.ellipse(px, py, 2.4, 1.6, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillRect(px - 3.5, py - 1.5, 1.4, 1.4); ctx.fillRect(px + 2.1, py - 1.5, 1.4, 1.4);
+  }
+}
+function drawFlotsam() {
+  const [px, py] = pf(LM.flotsam[0], LM.flotsam[1]);
+  ctx.save(); ctx.translate(px, py);
+  ctx.fillStyle = '#a07850'; ctx.save(); ctx.rotate(.4); ctx.fillRect(-12, -2, 16, 3.5); ctx.restore();
+  ctx.save(); ctx.rotate(-.3); ctx.fillRect(2, 3, 14, 3); ctx.restore();
+  ctx.fillStyle = '#8b5e34'; ctx.fillRect(-4, -9, 9, 7); ctx.strokeStyle = '#5a3b22'; ctx.lineWidth = 1; ctx.strokeRect(-4, -9, 9, 7);
+  ctx.fillStyle = '#2b2b2b'; ctx.fillRect(8, -6, 9, 6); ctx.fillStyle = '#c9a24a'; ctx.fillRect(11.5, -7, 2, 1.4);
+  ctx.restore();
+}
+function drawBoobies(r) {
+  const [px, py] = pf(LM.birds[0], LM.birds[1]);
+  for (let k = 0; k < 6; k++) {
+    const x = px + (r() - .5) * 40, y = py + (r() - .5) * 14;
+    ctx.fillStyle = '#f5f2ea'; ctx.beginPath(); ctx.ellipse(x, y - 3, 2, 3, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#3fb4e8'; ctx.fillRect(x - 2, y, 1.5, 1.2); ctx.fillRect(x + .5, y, 1.5, 1.2);
+  }
+}
+function drawSpringGlint() {
+  const [px, py] = pf(LM.spring[0], LM.spring[1]);
+  ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.ellipse(px, py + 1, 6, 2.2, 0, 0, Math.PI * 2); ctx.stroke();
+}
+function drawWreck() {
+  let best = null;
+  for (let y = 0; y < GH; y += 2) for (let x = (GW * .78) | 0; x < GW; x += 2) { const h = at(x, y); if (h < -.10 && h > -.12 && Math.abs(y - GH * .5) < GH * .25) { if (!best || x > best.x) best = { x, y }; } }
+  if (!best) return;
+  const [px, py] = proj(best.x, best.y, 0);
+  LM.wreck = [best.x / GW, best.y / GH];
+  ctx.save(); ctx.translate(px, py); ctx.rotate(-.35);
+  ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.beginPath(); ctx.ellipse(2, 6, 26, 6, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#ece8f2'; ctx.beginPath(); ctx.moveTo(-26, 0); ctx.lineTo(24, 0); ctx.lineTo(18, 7); ctx.lineTo(-22, 7); ctx.closePath(); ctx.fill();
+  ctx.fillRect(-14, -6, 22, 6); ctx.fillRect(-7, -10, 12, 4);
+  ctx.fillStyle = '#39e639'; ctx.fillRect(-12, -3, 18, 1.6);
+  ctx.fillStyle = '#5b6b7a'; ctx.fillRect(-12, -5, 3, 2); ctx.fillRect(-6, -5, 3, 2); ctx.fillRect(0, -5, 3, 2);
+  ctx.restore();
+}
+function drawStartMarker() {
+  let best = null, bd = 1e9;
+  seeds.forEach(s => { if (s.reg !== 1) return; const d = Math.hypot(s.x / GW - LM.crabs[0], s.y / GH - LM.crabs[1]); if (d < bd) { bd = d; best = s; } });
+  const fx = LM.crabs[0] - .012, fy = LM.crabs[1] - .006;          // the flag stands on the crab beach itself
+  const [px, py] = proj(fx * GW, fy * GH, Math.max(0, atf(fx, fy)));
+  ctx.strokeStyle = 'rgba(255,246,227,.95)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.ellipse(px, py, 16, 9, 0, 0, Math.PI * 2); ctx.stroke();
+  ctx.fillStyle = '#5a3b22'; ctx.fillRect(px - 1, py - 22, 2, 22);
+  ctx.fillStyle = '#39e639'; ctx.beginPath(); ctx.moveTo(px + 1, py - 22); ctx.lineTo(px + 12, py - 18); ctx.lineTo(px + 1, py - 14); ctx.fill();
+}
+
+// ---------- borders & labels (cached layers) ----------
+function renderBorders() {
+  borders = layer(); ctx = borders.x;
+  for (let y = 0; y < GH - 1; y++) for (let x = 0; x < GW - 1; x++) {
+    const i = y * GW + x, r = region[i]; if (r < 0) continue;
+    const rr = region[i + 1], rb = region[i + GW];
+    const diffR = rr !== r && rr >= 0, diffB = rb !== r && rb >= 0;
+    if (!diffR && !diffB) continue;
+    const other = diffR ? rr : rb, regBorder = regOf(seeds[r].reg) !== regOf(seeds[other].reg);
+    const [px, py] = proj(x + .5, y + .5, H[i]);
+    if (regBorder) { if ((x + y) % 2 === 0) { ctx.fillStyle = 'rgba(255,224,140,.8)'; ctx.fillRect(px - 1.1, py - 1.1, 2.4, 2.4); } }
+    else if ((x + y) % 4 === 0) { ctx.fillStyle = H[i] < 0 ? 'rgba(255,255,255,.25)' : 'rgba(255,250,220,.4)'; ctx.fillRect(px - 1, py - 1, 2, 2); }
+  }
+}
+function roundRect(x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+function label(fx, fy, txt, o) {
+  o = o || {}; const [px, py] = pf(fx, fy);
+  ctx.font = o.big ? "600 22px 'Fredoka'" : o.lock ? "600 12px 'Fredoka'" : "400 17px 'Patrick Hand'";
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
+  if (o.lock) { const w = ctx.measureText(txt).width + 16; ctx.fillStyle = 'rgba(30,25,20,.62)'; roundRect(px - w / 2, py - 10, w, 20, 10); ctx.fill(); ctx.fillStyle = '#ffe08a'; ctx.fillText(txt, px, py + .5); }
+  else { ctx.strokeStyle = 'rgba(20,30,25,.65)'; ctx.lineWidth = o.big ? 5 : 4; ctx.strokeText(txt, px, py); ctx.fillStyle = o.big ? 'rgba(' + o.col + ',1)' : '#fff6e3'; ctx.fillText(txt, px, py); }
+  ctx.textBaseline = 'alphabetic';
+}
+function cpos(c) { return [c[0] / c[2] / GW, c[1] / c[2] / GH]; }
+function renderLabels() {
+  labels = layer(); ctx = labels.x;
+  const off = { 1: [0, .02], 2: [-.02, 0], 3: [.12, -.13], 4: [.03, .08] };
+  [1, 2, 3, 4].forEach(r => { if (!REG_C[r]) return; const [fx, fy] = cpos(REG_C[r]); label(fx + off[r][0], fy + off[r][1], ['', 'I', 'II', 'III', 'IV'][r] + ' · ' + REGIONS[r].name, { big: true, col: REGIONS[r].col }); });
+  label(LM.bay[0], LM.bay[1] + .035, 'the cove');
+  label(LM.palms[0] - .025, LM.palms[1] - .015, 'palm grove');
+  label(LM.spring[0] + .03, LM.spring[1] - .01, 'spring');
+  label(LM.breadfruit[0] + .005, LM.breadfruit[1] - .03, 'breadfruit');
+  label(LM.crabs[0] + .03, LM.crabs[1] + .02, 'crab beach');
+  label(LM.flotsam[0] - .02, LM.flotsam[1] + .02, 'flotsam');
+  label(LM.birds[0], LM.birds[1] + .06, 'booby rocks');
+  label(LM.cave[0] - .035, LM.cave[1] + .025, 'bat cave');
+  label(LM.lagoon[0], LM.lagoon[1] + .02, 'lagoon');
+  label(LM.riptide[0], LM.riptide[1] + .02, 'riptide');
+  if (LM.wreck) label(LM.wreck[0] - .02, LM.wreck[1] + .05, 'the wreck');
+  const sign = (key, txt, dx, dy) => { if (BORDER_C[key]) { const [fx, fy] = cpos(BORDER_C[key]); label(fx + (dx || 0), fy + (dy || 0), txt, { lock: true }); } };
+  sign('1-2', '⛰ climb · gecko');
+  sign('1-3', '🔥 lava fields · too hot', 0, .01);
+  sign('1-4', '🌿 the tangle · talk to plants', .015, .03);
+  sign('3-4', '🌿 the tangle', .01, -.02);
+  label(LM.cave[0] + .01, LM.cave[1] + .05, '🦇 dark · bats', { lock: true });
+  label(LM.lagoon[0] + .02, LM.lagoon[1] - .05, '🐙 dive · octopus', { lock: true });
+  if (LM.wreck) label(LM.wreck[0] - .03, LM.wreck[1] - .045, '🐋 open sea · manta', { lock: true });
+}
+
+// ---------- animation layer ----------
+const hash = n => { const v = Math.sin(n * 127.1 + 311.7) * 43758.5453; return v - Math.floor(v); };
+const env = u => { const s = Math.sin(u * Math.PI); return s * s; };          // smooth 0→1→0 fade, no pops
+function setupAnim(r) {
+  // pools of water positions: deep sea for wavelets, any water for sun glints (denser in the glare band)
+  for (let k = 0; k < 9000 && anim.deep.length < 900; k++) { const fx = r(), fy = .03 + r() * .94; if (atf(fx, fy) < -.17) anim.deep.push([fx, fy]); }
+  for (let k = 0; k < 20000 && anim.water.length < 1400; k++) {
+    const fx = r(), fy = .03 + r() * .94, h = atf(fx, fy); if (h > -.01) continue;
+    const glare = Math.exp(-Math.pow((fx - .78) / .22, 2) - Math.pow((fy - .2) / .18, 2));
+    if (r() < .25 + glare * .75) anim.water.push([fx, fy, glare, -h]);
+  }
+  for (let k = 0; k < 70; k++) anim.wavelets.push({ P: 6 + r() * 6, o: r() * 50, w: 9 + r() * 16, tint: (r() * 3) | 0, id: k * 13.7 });
+  for (let k = 0; k < 90; k++) anim.glints.push({ P: 1.4 + r() * 2.2, o: r() * 20, id: k * 7.3, s: 1.5 + r() * 2.5 });
+  // open-sea wavelets: stylised curls drifting slowly
+  let tries = 0;
+
+  // riptide: bigger curls off the cove
+  for (let k = 0; k < 14; k++) {
+    const fx = LM.riptide[0] + (r() - .5) * .32, fy = LM.riptide[1] + (r() - .5) * .08;
+    if (atf(fx, fy) > -.14) continue;
+    anim.curls.push({ fx, fy, w: 18 + r() * 22, ph: r() * 6.28 });
+  }
+  for (let k = 0; k < 11; k++) anim.birds.push({ a: r() * 6.28, rr: 40 + r() * 55, sp: .12 + r() * .12, h: 25 + r() * 40, fl: r() * 6.28, s: 3 + r() * 2.5 });
+  for (let k = 0; k < 5; k++) anim.bats.push({ a: r() * 6.28, rr: 10 + r() * 14, sp: .9 + r() * .8, h: 14 + r() * 16 });
+}
+function drawAnim(t) {
+  const c = mainCtx;
+  // coastal surf: foam fronts roll out from the shore, white turning aqua, with soft fade in and out
+  const FOAM = ['#ffffff', '#e4fbf6', '#bff3ec', '#9fe9e4'];
+  for (let pass = 0; pass < 2; pass++) {
+    for (const p of anim.coast) {
+      const q = ((t * .11 + p.ph * .22 + pass * .5 + p.rp * .08) % 1 + 1) % 1;
+      const e = env(q) * (p.cliff ? .75 : .55);
+      if (e < .03) continue;
+      const off = q * (p.cliff ? 3 : 6), [px, py] = proj(p.x + p.nx * off, p.y + p.ny * off, 0);
+      c.globalAlpha = e; c.fillStyle = FOAM[Math.min(3, (q * 4) | 0)]; c.fillRect(px - .4, py, 2.6, 1.4);
+    }
+  }
+  // reef surf: crests travel along the reef and fade smoothly
+  c.fillStyle = '#ffffff';
+  for (const p of anim.surf) {
+    const w = .5 + .5 * Math.sin(t * .8 + p.x * .045 + p.y * .03), a = w * w * w * .6;
+    if (a < .03) continue;
+    c.globalAlpha = a; const [px, py] = proj(p.x, p.y, 0); c.fillRect(px, py, 2.4, 1.6);
+  }
+  c.globalAlpha = 1;
+  // shallow-water shimmer: slow light bands drifting through lagoon and cove
+  c.globalCompositeOperation = 'lighter';
+  for (const [fx, fy, w] of [[LM.lagoon[0], LM.lagoon[1], 70], [LM.bay[0], LM.bay[1] + .01, 40]]) {
+    const [px, py] = pf(fx, fy);
+    for (let k = 0; k < 3; k++) {
+      const u = ((t * .07 + k / 3) % 1), x = px - w + u * w * 2, a = env(u) * .10;
+      const g = c.createRadialGradient(x, py + (k - 1) * 8, 0, x, py + (k - 1) * 8, w * .5);
+      g.addColorStop(0, 'rgba(210,255,245,' + a + ')'); g.addColorStop(1, 'rgba(210,255,245,0)');
+      c.fillStyle = g; c.fillRect(x - w * .5, py - w * .5 + (k - 1) * 8, w, w);
+    }
+  }
+  c.globalCompositeOperation = 'source-over';
+  // open-sea wavelets: each lives one cycle (fade in, drift, fade out) then reappears elsewhere
+  const WT = [[232, 250, 255], [175, 240, 235], [150, 215, 245]];
+  c.lineCap = 'round';
+  for (const w of anim.wavelets) {
+    const tt = t + w.o, cyc = Math.floor(tt / w.P), u = tt / w.P - cyc;
+    const pt = anim.deep[(hash(cyc + w.id) * anim.deep.length) | 0]; if (!pt) continue;
+    const a = env(u) * .42, [px0, py] = pf(pt[0], pt[1]), px = px0 + (u - .5) * 14, ww = w.w * (.7 + .3 * env(u));
+    const col = WT[w.tint];
+    c.strokeStyle = 'rgba(10,70,105,' + a * .6 + ')'; c.lineWidth = 1.6;            // dark trough under the crest
+    c.beginPath(); c.moveTo(px - ww, py + 1.6); c.quadraticCurveTo(px - ww * .3, py - 2.4, px, py + .6); c.quadraticCurveTo(px + ww * .3, py + 3.6, px + ww * .6, py + .6); c.stroke();
+    c.strokeStyle = 'rgba(' + col[0] + ',' + col[1] + ',' + col[2] + ',' + a + ')'; c.lineWidth = 1.4;
+    c.beginPath(); c.moveTo(px - ww, py); c.quadraticCurveTo(px - ww * .3, py - 4, px, py - 1); c.quadraticCurveTo(px + ww * .3, py + 2, px + ww * .6, py - 1); c.stroke();
+  }
+  for (const w of anim.curls) {
+    const u = ((t * .09 + w.ph) % 1), a = env(u) * .5;
+    const [px0, py] = pf(w.fx, w.fy), px = px0 + (u - .5) * 26;
+    c.strokeStyle = 'rgba(10,70,105,' + a * .5 + ')'; c.lineWidth = 2;
+    c.beginPath(); c.moveTo(px - w.w, py + 2); c.quadraticCurveTo(px, py - 5, px + w.w * .6, py + 1); c.stroke();
+    c.strokeStyle = 'rgba(225,248,255,' + a + ')'; c.lineWidth = 1.7;
+    c.beginPath(); c.moveTo(px - w.w, py); c.quadraticCurveTo(px, py - 7, px + w.w * .6, py - 1); c.quadraticCurveTo(px + w.w * .9, py + 2, px + w.w * .6, py + 5); c.stroke();
+  }
+  // sun glints: little star sparkles, most of them in the glare band
+  c.globalCompositeOperation = 'lighter';
+  for (const g of anim.glints) {
+    const tt = t + g.o, cyc = Math.floor(tt / g.P), u = tt / g.P - cyc;
+    const pt = anim.water[(hash(cyc * 3.1 + g.id) * anim.water.length) | 0]; if (!pt) continue;
+    const e = Math.pow(Math.sin(u * Math.PI), 4) * (.45 + .55 * pt[2]); if (e < .03) continue;
+    const [px, py] = pf(pt[0], pt[1]), s = g.s * (.6 + .6 * e) * (pt[3] < .05 ? .7 : 1);
+    c.fillStyle = 'rgba(255,250,225,' + e + ')';
+    c.fillRect(px - s, py - .35, s * 2, .7); c.fillRect(px - .35, py - s * .7, .7, s * 1.4);
+    c.fillStyle = 'rgba(255,255,255,' + e * .9 + ')'; c.fillRect(px - .7, py - .7, 1.4, 1.4);
+  }
+  c.globalCompositeOperation = 'source-over';
+  // crater & lava glow, gently pulsing
+  if (anim.crater) {
+    const [cx, cy] = anim.crater, pulse = .45 + .18 * Math.sin(t * 1.3);
+    c.globalCompositeOperation = 'lighter';
+    const g = c.createRadialGradient(cx, cy, 0, cx, cy, 46); g.addColorStop(0, 'rgba(255,140,40,' + pulse + ')'); g.addColorStop(1, 'rgba(255,90,20,0)');
+    c.fillStyle = g; c.fillRect(cx - 50, cy - 50, 100, 100);
+    for (let k = 0; k <= 8; k++) {
+      const [qx, qy] = pf(lerp(VX + .04, VX + .14, k / 8), lerp(VY - .035, VY - .16, k / 8));
+      const gg = c.createRadialGradient(qx, qy, 0, qx, qy, 14), pa = .18 + .12 * Math.sin(t * 2 - k * .7);
+      gg.addColorStop(0, 'rgba(255,110,30,' + pa + ')'); gg.addColorStop(1, 'rgba(255,110,30,0)');
+      c.fillStyle = gg; c.fillRect(qx - 15, qy - 15, 30, 30);
+    }
+    c.globalCompositeOperation = 'source-over';
+    // smoke: puffs rise, drift east and fade, looping
+    for (let k = 0; k < 12; k++) {
+      const q = ((t * .045 + k / 12) % 1), r = 8 + q * 64;
+      const sx = cx + q * 120 + Math.sin(q * 6 + k) * 8, sy = cy - 22 - q * 210;
+      const a = Math.sin(Math.min(1, q * 6) * Math.PI / 2) * (1 - q) * .75;
+      const sg = c.createRadialGradient(sx, sy, 0, sx, sy, r); sg.addColorStop(0, 'rgba(240,236,230,' + a + ')'); sg.addColorStop(1, 'rgba(240,236,230,0)');
+      c.fillStyle = sg; c.beginPath(); c.arc(sx, sy, r, 0, Math.PI * 2); c.fill();
+    }
+  }
+  // seabirds circling over the booby rocks
+  const [bx, by] = pf(LM.birds[0], LM.birds[1]);
+  c.strokeStyle = 'rgba(255,255,255,.92)'; c.lineWidth = 1.4;
+  for (const b of anim.birds) {
+    const a = b.a + t * b.sp, x = bx + Math.cos(a) * b.rr, y = by - b.h + Math.sin(a) * b.rr * .35, f = Math.sin(t * 5 + b.fl) * .6, s = b.s;
+    c.beginPath(); c.moveTo(x - s, y - f * s); c.quadraticCurveTo(x - s / 2, y - s * .7, x, y); c.quadraticCurveTo(x + s / 2, y - s * .7, x + s, y - f * s); c.stroke();
+  }
+  // bats fluttering at the cave mouth
+  const [vx, vy] = pf(LM.cave[0], LM.cave[1]);
+  c.fillStyle = '#1a1414';
+  for (const b of anim.bats) {
+    const a = b.a + t * b.sp, x = vx + Math.cos(a) * b.rr, y = vy - b.h + Math.sin(a * 1.7) * 5, f = Math.sin(t * 14 + b.a) * 2;
+    c.beginPath(); c.moveTo(x - 4, y - f); c.quadraticCurveTo(x - 2, y - 2.5, x, y); c.quadraticCurveTo(x + 2, y - 2.5, x + 4, y - f); c.quadraticCurveTo(x, y + 1.2, x - 4, y - f); c.fill();
+  }
+}
+function vignette(c) {
+  const g = c.createRadialGradient(CW / 2, CH / 2, CH * .35, CW / 2, CH / 2, CH * .95);
+  g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,15,30,.45)');
+  c.fillStyle = g; c.fillRect(0, 0, CW, CH);
+}
+function frame(ms) {
+  const t = ms / 1000;
+  mainCtx.setTransform(1, 0, 0, 1, 0, 0);
+  mainCtx.drawImage(base.c, 0, 0);
+  if (showTiles) mainCtx.drawImage(borders.c, 0, 0);
+  mainCtx.setTransform(K, 0, 0, K, 0, 0);
+  drawAnim(t);
+  mainCtx.setTransform(1, 0, 0, 1, 0, 0);
+  if (showLabels) mainCtx.drawImage(labels.c, 0, 0);
+  mainCtx.setTransform(K, 0, 0, K, 0, 0);
+  vignette(mainCtx);
+  requestAnimationFrame(frame);
+}
+
+// ---------- build (with a loading screen) ----------
+const lbar = document.getElementById('lbar');
+const step = (p, fn) => new Promise(res => setTimeout(() => { fn(); lbar.style.width = p + '%'; res(); }, 20));
+async function build() {
+  const t0 = performance.now();
+  initNoise();
+  await step(40, buildTerrain);
+  await step(65, buildTiles);
+  await step(90, renderBase);
+  if (document.fonts) await document.fonts.ready.catch(() => {});
+  await step(100, () => { renderBorders(); renderLabels(); });
+  document.getElementById('info').textContent = 'built in ' + Math.round(performance.now() - t0) + ' ms · ' + seeds.length + ' tiles · ' + GW + '×' + GH + ' grid';
+  const ld = document.getElementById('loading'); ld.style.opacity = 0; setTimeout(() => ld.remove(), 700);
+  requestAnimationFrame(frame);
+}
+document.getElementById('bLabels').onclick = e => { showLabels = !showLabels; e.target.textContent = 'Labels: ' + (showLabels ? 'on' : 'off'); };
+document.getElementById('bTiles').onclick = e => { showTiles = !showTiles; e.target.textContent = 'Tile borders: ' + (showTiles ? 'on' : 'off'); };
+build();
+</script>
+</body>
+</html>
