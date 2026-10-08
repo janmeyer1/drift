@@ -1,0 +1,1639 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Island Map Play v003</title>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600&family=Patrick+Hand&display=swap" rel="stylesheet">
+<style>
+html,body{margin:0;height:100%;background:#0a3e5e;overflow:hidden;font-family:'Fredoka',system-ui,sans-serif}
+#wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}
+canvas{width:min(100vw,160vh);height:min(62.5vw,100vh);display:block}
+#ui{position:fixed;right:12px;bottom:12px;display:flex;gap:8px}
+button{border:0;border-radius:12px;padding:8px 14px;font:600 14px 'Fredoka',system-ui;background:rgba(255,246,227,.9);color:#3b2a1a;cursor:pointer}
+#loading{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:radial-gradient(ellipse at 50% 55%,#1a7a9a 0%,#0a3e5e 70%);color:#fff6e3;font:400 26px 'Patrick Hand',cursive;transition:opacity .6s;z-index:5}
+#loading .bar{width:220px;height:6px;border-radius:3px;background:rgba(255,255,255,.2);overflow:hidden}
+#loading .bar i{display:block;height:100%;width:0;background:#7fe6d6;transition:width .2s}
+#info{position:fixed;left:12px;bottom:14px;z-index:4;color:rgba(255,246,227,.55);font-size:12px}
+#hud{position:fixed;left:12px;top:10px;display:flex;flex-direction:column;gap:6px;z-index:3;pointer-events:none}
+.pill{background:rgba(10,40,60,.72);color:#fff6e3;border-radius:12px;padding:6px 12px;font:400 14px 'Fredoka',system-ui;backdrop-filter:blur(3px);max-width:44vw}
+.pill b{color:#7fe6d6}
+.bar2{height:5px;border-radius:3px;background:rgba(255,255,255,.18);margin-top:4px;overflow:hidden}.bar2 i{display:block;height:100%;width:0;background:#9be36b;transition:width .4s}
+#omen{position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:3;text-align:center;max-width:46vw}
+#omen b{color:#ff9d7a}
+#panel{position:fixed;right:12px;top:10px;width:min(300px,34vw);max-height:calc(100vh - 80px);overflow:auto;background:rgba(255,246,227,.94);color:#3b2a1a;border-radius:14px;padding:10px 14px;display:none;z-index:3;font-size:14px;box-shadow:0 4px 18px rgba(0,0,0,.3)}
+#panel h3{margin:0 0 6px;font:600 18px 'Fredoka'}#panel p{margin:4px 0;line-height:1.3}
+#panel button{display:block;width:100%;margin-top:6px;background:#2f7f6f;color:#fff}
+.warn{color:#b0351c}
+#ui{z-index:3}#bEnd{background:#ffcf5a;font-size:16px}
+#toast{position:fixed;left:50%;bottom:62px;transform:translateX(-50%);background:rgba(10,40,60,.88);color:#fff6e3;padding:8px 16px;border-radius:12px;opacity:0;transition:opacity .4s;pointer-events:none;z-index:4;max-width:70vw;text-align:center;font-size:15px}
+#banner{position:fixed;left:0;right:0;top:40%;text-align:center;font:400 54px 'Patrick Hand',cursive;color:#fff6e3;text-shadow:0 3px 14px rgba(0,30,60,.8);opacity:0;transition:opacity .5s;pointer-events:none;z-index:4}
+#card{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,20,35,.45);z-index:6}
+.cardbox{background:#fff6e3;color:#3b2a1a;border-radius:16px;padding:16px 22px;max-width:min(440px,80vw);max-height:80vh;overflow:auto;box-shadow:0 8px 30px rgba(0,0,0,.4)}
+.cardbox h2{margin:0 0 8px;font:600 22px 'Fredoka'}#cardB{font-size:15px;line-height:1.4}#cardB p{margin:4px 0}
+#cardBtn{margin-top:12px;background:#2f7f6f;color:#fff;float:right}
+@media (max-height:500px){.pill{font-size:12px;padding:4px 9px}#panel{font-size:12px}#banner{font-size:40px}}
+.chat{position:fixed;bottom:58px;width:min(280px,30vw);z-index:4;display:none;border-radius:14px;padding:6px 10px 8px;box-shadow:0 6px 18px rgba(0,0,0,.3)}
+.chat .lines{max-height:min(28vh,150px);overflow-y:auto;scrollbar-width:thin}
+.chat .who{display:block;font:600 11px 'Fredoka',system-ui;letter-spacing:.05em;text-transform:uppercase;padding:2px 0 3px;margin:-2px 0 2px}
+.chat .ln{margin:3px 0;transition:opacity .4s}
+#chatT{right:12px;background:rgba(255,246,227,.94);color:#3b2a1a;font:400 14px/1.3 'Fredoka',system-ui}#chatT .who{color:#2f7f6f}
+#chatB{left:12px;background:rgba(30,34,38,.93);color:#e8f5e4;font:400 13px/1.3 'Courier New',monospace}#chatB .who{color:#39e639}
+#info button{padding:2px 8px;font-size:11px;border-radius:8px;background:rgba(255,246,227,.25);color:#fff6e3;margin-left:4px}
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="cv"></canvas></div>
+<div id="hud"><div class="pill" id="hGoal"></div><div class="pill">🌊 <b id="hG"></b> · Tide <b id="hT"></b></div><div class="pill">Wandel <b id="hW"></b>/20 · <span id="hS"></span><div class="bar2"><i id="hWb"></i></div></div><div class="pill" id="hR"></div></div>
+<div class="pill" id="omen"></div><div id="panel"></div>
+<div id="ui"><button id="bTiles">Tile borders: on</button><button id="bInv">Inventory · 1 🌊</button><button id="bEnd">End ebb</button></div>
+<div id="toast"></div><div class="chat" id="chatT"><span class="who">🐢 Tortoise</span><div class="lines"></div></div><div class="chat" id="chatB"><span class="who">💼 Briefcase</span><div class="lines"></div></div><div id="banner"></div>
+<div id="card"><div class="cardbox"><h2 id="cardT"></h2><div id="cardB"></div><button id="cardBtn">OK</button></div></div>
+<div id="info"><span></span><button id="bStory">Story ↺</button></div>
+<div id="loading"><div>Charting the island…</div><div class="bar"><i id="lbar"></i></div></div>
+<script>
+'use strict';
+// =====================================================================
+// Island world map — baked terrain layer + live animation layer.
+// Terrain is computed once (fine 2px grid), cached as an image; only
+// waves, surf, smoke, birds, bats and glows are redrawn every frame.
+// Positions are fractions of the grid (0..1), so detail can change freely.
+// =====================================================================
+const CW = 1600, CH = 1000, GW = 800, GH = 600, S = CW / GW, SC = 400 / GW;   // SC: noise scale vs. the old 400-wide grid
+const TILT = .74, ELEV = 210, SEED = 7;
+const K = Math.min(2, window.devicePixelRatio || 1);
+const VX = .5, VY = .43;
+const LM = {
+  bay: [.47, .765], spring: [.505, .655], palms: [.45, .68], breadfruit: [.565, .675], crabs: [.565, .785], flotsam: [.405, .775],
+  cave: [.372, .488], birds: [.19, .30], lagoon: [.80, .52], riptide: [.47, .90]
+};
+const ESCARP = [[.435, .50], [.375, .80]];
+const THICKET = [[.585, .12], [.635, .82]];
+const REGIONS = {
+  1: { name: 'Castaway Cove', col: '255,236,170' }, 2: { name: 'Booby Cliffs', col: '255,255,255' },
+  3: { name: 'Fire Mountain', col: '255,170,120' }, 4: { name: 'Lagoon & Reef', col: '150,240,230' }
+};
+const cv = document.getElementById('cv');
+cv.width = CW * K; cv.height = CH * K;
+const mainCtx = cv.getContext('2d');
+let ctx = mainCtx;                                      // drawing helpers draw into whatever layer ctx points to
+function layer() { const c = document.createElement('canvas'); c.width = CW * K; c.height = CH * K; const x = c.getContext('2d'); x.setTransform(K, 0, 0, K, 0, 0); return { c, x }; }
+let showLabels = true, showTiles = true;
+
+// ---------- noise ----------
+function mulberry(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+let rnd, perm;
+function initNoise() { rnd = mulberry(SEED * 9973 + 1); perm = new Float32Array(256 * 256); for (let i = 0; i < perm.length; i++) perm[i] = rnd(); }
+function vnoise(x, y) {
+  const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi;
+  const g = (a, b) => perm[((a & 255) * 256) + (b & 255)];
+  const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+  return (g(xi, yi) * (1 - u) + g(xi + 1, yi) * u) * (1 - v) + (g(xi, yi + 1) * (1 - u) + g(xi + 1, yi + 1) * u) * v;
+}
+function fbm(x, y, o) { let s = 0, a = .5, f = 1, n = 0; for (let i = 0; i < (o || 5); i++) { s += a * vnoise(x * f, y * f); n += a; a *= .5; f *= 2.03; } return s / n; }
+function ridged(x, y, o) { let s = 0, a = .5, f = 1, n = 0; for (let i = 0; i < (o || 4); i++) { const r = 1 - Math.abs(vnoise(x * f, y * f) * 2 - 1); s += a * r * r; n += a; a *= .5; f *= 2.1; } return s / n; }
+// cellular noise: distance to nearest and second-nearest feature point → plates and cracks
+function worley(x, y) {
+  const xi = Math.floor(x), yi = Math.floor(y); let f1 = 9, f2 = 9;
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+    const cx = xi + dx, cy = yi + dy;
+    const px = cx + perm[((cx & 255) * 256) + (cy & 255)], py = cy + perm[(((cx + 37) & 255) * 256) + ((cy + 91) & 255)];
+    const d = Math.hypot(px - x, py - y);
+    if (d < f1) { f2 = f1; f1 = d; } else if (d < f2) f2 = d;
+  }
+  return [f1, f2];
+}
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const lerp = (a, b, t) => a + (b - a) * t;
+const smooth = (a, b, v) => { const t = clamp((v - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+function mix(c1, c2, t) { return [lerp(c1[0], c2[0], t), lerp(c1[1], c2[1], t), lerp(c1[2], c2[2], t)]; }
+function hex(h) { return [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)]; }
+function segDist(px, py, a, b) {
+  const dx = b[0] - a[0], dy = b[1] - a[1], L = dx * dx + dy * dy;
+  const t = clamp(((px - a[0]) * dx + (py - a[1]) * dy) / L, 0, 1);
+  const qx = a[0] + t * dx, qy = a[1] + t * dy;
+  return { d: Math.hypot(px - qx, py - qy), side: Math.sign(dx * (py - a[1]) - dy * (px - a[0])), t };
+}
+
+// ---------- terrain ----------
+let H, moist, feat, region, seeds, lavaAmt, tangleAmt, plat, caveAmt, cellReg;
+const F_LAVAFIELD = 1, F_THICKET = 2, F_STREAM = 4, F_GUANO = 8, F_LAVA = 16, F_RIM = 32, F_ESC = 64, F_CAVERIM = 128;
+function volR(nx, ny) { return Math.hypot((nx - VX) / .13, (ny - VY) / .115); }
+function volRW(nx, ny) { return volR(nx, ny) + (fbm(nx * 7 + 13, ny * 7 + 2, 3) - .5) * .7; }
+function escSigned(nx, ny) {
+  const wx = nx - Math.sin(ny * 21 + 1) * .01 - (fbm(ny * 8, 9, 3) - .5) * .03;
+  const a = ESCARP[0], b = ESCARP[1], dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy);
+  return (dx * (ny - a[1]) - dy * (wx - a[0])) / L;
+}
+function plateauMask(nx, ny) { return smooth(-.004, .007, escSigned(nx, ny)) * smooth(1.45, 1.75, volRW(nx, ny)); }
+function thicketSigned(nx, ny) {
+  const wx = nx - Math.sin(ny * 26) * .012 - (fbm(ny * 9, 5, 3) - .5) * .03;
+  const a = THICKET[0], b = THICKET[1], dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy);
+  return -(dx * (ny - a[1]) - dy * (wx - a[0])) / L;
+}
+function buildTerrain() {
+  const N = GW * GH;
+  H = new Float32Array(N); moist = new Float32Array(N); feat = new Uint8Array(N);
+  lavaAmt = new Float32Array(N); tangleAmt = new Float32Array(N); plat = new Float32Array(N); caveAmt = new Float32Array(N);
+  for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) {
+    const nx = x / GW, ny = y / GH, i = y * GW + x;
+    const wx = (fbm(nx * 3 + 11, ny * 3 + 3, 4) - .5) * .22, wy = (fbm(nx * 3 + 41, ny * 3 + 17, 4) - .5) * .22;
+    const dx = (nx - .5 + wx) / .40, dy = (ny - .48 + wy) / .36;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    let h = (1 - Math.pow(d, 1.9)) * .30 + (fbm(nx * 6, ny * 6, 5) - .5) * .24;
+    // volcano: cone, rim, crater, radial erosion gullies with sharp ribs
+    const vr = volR(nx, ny), ang = Math.atan2(ny - VY, nx - VX);
+    h += Math.exp(-vr * 2.0) * 1.15;
+    const rimNoise = .85 + .3 * fbm(Math.cos(ang) * 2 + 50, Math.sin(ang) * 2 + 50, 2);
+    h += Math.exp(-Math.pow((vr - .12) / .04, 2)) * .10 * rimNoise;
+    h -= Math.exp(-Math.pow(vr / .10, 2)) * .42;
+    if (Math.abs(vr - .12) < .03) feat[i] |= F_RIM;
+    const gully = Math.abs(Math.sin(ang * 13 + fbm(nx * 5, ny * 5, 3) * 5));
+    h += (Math.pow(gully, .6) - .62) * .075 * smooth(.12, .3, vr) * smooth(1.7, .8, vr);
+    h += (ridged(nx * 22, ny * 22, 3) - .45) * .05 * smooth(.2, .5, vr) * smooth(1.6, 1.0, vr);
+    // the start bay
+    const br = Math.hypot((nx - LM.bay[0]) / .055, (ny - LM.bay[1]) / .04);
+    h -= Math.exp(-br * br) * .14;
+    // lagoon
+    const lr = Math.hypot((nx - LM.lagoon[0]) / .08, (ny - LM.lagoon[1]) / .10);
+    h -= Math.exp(-lr * lr) * .22;
+    // Booby Cliffs plateau, with rough rocky edges
+    const pm = plateauMask(nx, ny); plat[i] = pm;
+    if (h > -.03) {
+      h += pm * .12 + pm * (1 - pm) * 4 * (ridged(nx * 40, ny * 40, 3) - .5) * .05;
+      if (pm > .12 && pm < .88 && h > .02) feat[i] |= F_ESC;
+    }
+    // bird rocks
+    const bc = Math.hypot((nx - LM.birds[0]) / .07, (ny - LM.birds[1]) / .05);
+    if (bc < 1.4) { h += Math.exp(-bc * bc) * .16 + (ridged(nx * 50, ny * 50, 3) - .5) * .04 * Math.exp(-bc * bc); if (h > .05 && bc < 1.1) feat[i] |= F_GUANO; }
+    // bat cave: an outcrop on the mountain's south-west flank with a dark mouth under it
+    const cr = Math.hypot((nx - LM.cave[0]) / .014, (ny - LM.cave[1]) / .010);
+    const crTop = Math.hypot((nx - LM.cave[0]) / .022, (ny - (LM.cave[1] - .012)) / .013);
+    h += Math.exp(-crTop * crTop) * .06;
+    if (cr < 1) caveAmt[i] = smooth(1, .25, cr);
+    else if (crTop < 1.5) feat[i] |= F_CAVERIM;
+    // old lava field
+    {
+      const vrw = volRW(nx, ny);
+      const band = smooth(.95, 1.2, vrw) * smooth(1.85, 1.45, vrw);
+      const south = smooth(.25, .6, Math.sin(ang)) * smooth(.75, .45, Math.abs(Math.cos(ang)));
+      const amt = band * south * (.55 + .9 * fbm(nx * 10 + 3, ny * 10, 3)) - .45;
+      if (amt > 0 && h > .06) { lavaAmt[i] = clamp(amt * 2.2, 0, 1); if (lavaAmt[i] > .3) feat[i] |= F_LAVAFIELD; h += lavaAmt[i] * (ridged(nx * 60, ny * 60, 2) - .5) * .015; }
+    }
+    // fresh lava flow
+    const lf = segDist(nx, ny, [VX + .04, VY - .035], [VX + .14, VY - .16]);
+    if (lf.d < .006 + .004 * fbm(nx * 30, ny * 30, 2) && h > .02) feat[i] |= F_LAVA;
+    // the tangle
+    const th = segDist(nx - Math.sin(ny * 26) * .012 - (fbm(ny * 9, 5, 3) - .5) * .03, ny, THICKET[0], THICKET[1]);
+    {
+      const amt = (1 - th.d / (.03 + .02 * fbm(nx * 14 + 8, ny * 14, 3))) * smooth(0, .03, th.t) * smooth(1, .97, th.t) * smooth(.9, 1.3, vr);
+      if (amt > 0 && h > .03) { tangleAmt[i] = clamp(amt * 1.6, 0, 1); if (tangleAmt[i] > .35) feat[i] |= F_THICKET; }
+    }
+    // stream
+    const wig = (fbm(ny * 25, 3, 2) - .5) * .012;
+    const st2 = segDist(nx - wig, ny, LM.spring, [LM.bay[0] + .01, LM.bay[1] - .03]);
+    if ((st2.d < .0035 || Math.hypot((nx - LM.spring[0]) / .014, (ny - LM.spring[1]) / .011) < 1) && h > 0) feat[i] |= F_STREAM;
+    h -= .06;
+    // the plateau meets the sea as a sheer cliff: no sand, deeper water at its foot
+    if (pm > .35) { if (h >= 0 && h < .12) h = .12 + h * .5; else if (h < 0 && h > -.05) h = -.05 + h * .3; }
+    H[i] = h;
+    moist[i] = fbm(nx * 4 + 70, ny * 4 + 70, 4) + (ny - .5) * .3 - Math.max(0, (nx - .5)) * .2;
+  }
+}
+const at = (x, y) => H[clamp(y, 0, GH - 1) * GW + clamp(x, 0, GW - 1)];
+const atf = (fx, fy) => at((fx * GW) | 0, (fy * GH) | 0);
+
+// ---------- regions & tiles ----------
+const TILE_MIN_H = -.135, TILE_AREA = 1650 * (GW / 400) * (GH / 300);
+function cellRegion(x, y) {
+  const i = y * GW + x, h = H[i], nx = x / GW, ny = y / GH;
+  if (h < TILE_MIN_H) return 0;
+  if (h < -.02) return 5;
+  if (plat[i] > .5) return 2;
+  const vr = volRW(nx, ny), east = thicketSigned(nx, ny) > -.012;
+  if (vr < 1.7) return 3;
+  if (east) return 4;
+  if (ny < VY + .02) return 3;
+  return 1;
+}
+let REG_C = {}, BORDER_C = {};
+const regOf = r => r === 5 ? 4 : r;
+function buildTiles() {
+  cellReg = new Int8Array(GW * GH);
+  const cells = { 1: [], 2: [], 3: [], 4: [], 5: [] };
+  for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) { const r = cellRegion(x, y); cellReg[y * GW + x] = r; if (r) cells[r].push(y * GW + x); }
+  seeds = [];
+  [1, 2, 3, 4, 5].forEach(r => {
+    const list = cells[r]; if (!list.length) return;
+    const n = Math.max(2, Math.round(list.length / (TILE_AREA * { 1: .42, 2: 1, 3: .85, 4: .85, 5: 2.4 }[r])));   // the start region gets small, many tiles
+    const minD = Math.sqrt(list.length / n) * .75;
+    let placed = 0, tries = 0;
+    while (placed < n && tries < 20000) {
+      tries++;
+      const c = list[(rnd() * list.length) | 0], x = c % GW, y = (c / GW) | 0;
+      if (seeds.some(s => s.reg === r && Math.hypot(s.x - x, s.y - y) < minD)) continue;
+      seeds.push({ x, y, reg: r, water: r === 5 }); placed++;
+    }
+  });
+  const byReg = { 1: [], 2: [], 3: [], 4: [], 5: [] };
+  seeds.forEach((s, k) => byReg[s.reg].push(k));
+  region = new Int16Array(GW * GH).fill(-1);
+  for (let it = 0; it < 4; it++) {
+    const sx = new Float64Array(seeds.length), sy = new Float64Array(seeds.length), sn = new Float64Array(seeds.length);
+    for (let i = 0; i < GW * GH; i++) {
+      const r = cellReg[i]; if (!r) continue;
+      const x = i % GW, y = (i / GW) | 0, ks = byReg[r];
+      let best = -1, bd = 1e12;
+      for (let j = 0; j < ks.length; j++) { const s = seeds[ks[j]], dx = s.x - x, dy = s.y - y, dd = dx * dx + dy * dy; if (dd < bd) { bd = dd; best = ks[j]; } }
+      region[i] = best;
+      sx[best] += x; sy[best] += y; sn[best]++;
+    }
+    if (it < 3) seeds.forEach((s, k) => { if (sn[k]) { s.x = sx[k] / sn[k]; s.y = sy[k] / sn[k]; } });
+  }
+  REG_C = {}; BORDER_C = {};
+  for (let i = 0; i < GW * GH; i++) {
+    const r = cellReg[i]; if (!r || r === 5) continue;
+    const x = i % GW, y = (i / GW) | 0;
+    (REG_C[r] = REG_C[r] || [0, 0, 0]); REG_C[r][0] += x; REG_C[r][1] += y; REG_C[r][2]++;
+    if (x < GW - 1 && y < GH - 1) for (const o of [cellReg[i + 1], cellReg[i + GW]]) {
+      if (o && o !== 5 && o !== r) { const key = Math.min(r, o) + '-' + Math.max(r, o); (BORDER_C[key] = BORDER_C[key] || [0, 0, 0]); BORDER_C[key][0] += x; BORDER_C[key][1] += y; BORDER_C[key][2]++; }
+    }
+  }
+}
+
+// ---------- colours ----------
+const COL = {
+  deep: hex('#0a3e5e'), sand: hex('#f2dcaa'), sandWet: hex('#d8bb80'),
+  lowland: hex('#8cc152'), grass: hex('#6fae45'), jungle: hex('#2f7a40'), jungleDeep: hex('#215a30'),
+  high: hex('#5f7a3c'), rock: hex('#8a7058'), rockDark: hex('#5a4840'), ash: hex('#4a403c'), crater: hex('#2b211e'),
+  basalt: hex('#353133'), tangle: hex('#1d3f26')
+};
+const WATER = [[0, '#d3f7e8'], [.012, '#a6f0de'], [.035, '#5fdccb'], [.06, '#2cc3c6'], [.09, '#1aa6c2'], [.13, '#1484ad'], [.19, '#0f5f8a'], [.28, '#0a3e5e']].map(([d, c]) => [d, hex(c)]);
+function waterColor(h, x, y) {
+  const d = -h;
+  let c = WATER[WATER.length - 1][1];
+  for (let k = 0; k < WATER.length - 1; k++) if (d < WATER[k + 1][0]) { c = mix(WATER[k][1], WATER[k + 1][1], (d - WATER[k][0]) / (WATER[k + 1][0] - WATER[k][0])); break; }
+  if (d < .10) {
+    const sandPatch = fbm(x * .06 + 5, y * .06, 3);
+    if (sandPatch > .6) c = mix(c, hex('#c8f3e2'), clamp((sandPatch - .6) * 4, 0, .45) * (1 - d / .1));
+    const grass = fbm(x * .08 + 20, y * .08 + 9, 3);
+    if (grass > .6 && d > .015) c = mix(c, hex('#2f9e8a'), clamp((grass - .6) * 3, 0, .4));
+    const ca = (fbm(x * .05, y * .05 + 3, 3) * 18) % 1;
+    if (ca < .07) c = mix(c, [255, 255, 255], .14 * (1 - d / .1));
+  }
+  if (d > .08 && d < .14) {
+    const n = fbm(x * .12, y * .12, 3), chan = fbm(x * .03 + 40, y * .03, 2);
+    if (chan > .36) {
+      if (n > .48) c = mix(hex('#38c9c4'), hex('#8fe8d6'), clamp((n - .48) * 5, 0, 1));
+      if (n > .58) {
+        const pick = vnoise(x * .8 + 3, y * .8);
+        const coral = pick > .7 ? hex('#ff7f8f') : pick > .45 ? hex('#ffb07a') : pick > .25 ? hex('#c58cff') : hex('#ffe09a');
+        c = mix(c, coral, .6 * clamp((n - .58) * 6, 0, 1));
+      }
+    }
+  }
+  return c;
+}
+// rock texture: plates (worley) with darker cracks and fine grit
+function rockTex(c, x, y, strength, freq) {
+  const [f1, f2] = worley(x * freq, y * freq), edge = f2 - f1;
+  let k = 1 + (.5 - f1) * .25 * strength;
+  if (edge < .09) k *= 1 - (1 - edge / .09) * .35 * strength;
+  k *= 1 + (vnoise(x * 1.3, y * 1.3) - .5) * .18 * strength;
+  return [c[0] * k, c[1] * k, c[2] * k];
+}
+function landColor(h, m, slope, f, x, y, i) {
+  let c;
+  if (h < .025) c = mix(COL.sandWet, COL.sand, h / .025);
+  else if (h < .05) c = mix(COL.sand, COL.lowland, (h - .025) / .025);
+  else if (h < .34) {
+    const j = clamp((m - .42) * 3.2 + (h - .05) * 2.2, 0, 1);
+    c = mix(mix(COL.lowland, COL.grass, (h - .05) / .29), mix(COL.jungle, COL.jungleDeep, (h - .05) / .29), j);
+  }
+  else if (h < .48) c = mix(COL.jungleDeep, COL.high, (h - .34) / .14);
+  else if (h < .66) c = mix(COL.high, COL.rock, (h - .48) / .18);
+  else c = mix(COL.rock, COL.ash, clamp((h - .66) / .2, 0, 1));
+  let rocky = 0;
+  if (h > .06 && slope > .028) { const r = clamp((slope - .028) * 30, 0, .85); c = mix(c, h > .4 ? COL.rockDark : COL.rock, r); rocky = Math.max(rocky, r); }
+  if (h > .5) rocky = Math.max(rocky, smooth(.5, .7, h));
+  if (lavaAmt[i] > 0) {
+    // cracked basalt plates with faintly glowing seams
+    const [f1, f2] = worley(x * .22, y * .26), edge = f2 - f1;
+    let b = mix(COL.basalt, hex('#4a3b36'), clamp(f1 * 1.3, 0, 1));
+    if (edge < .07) b = mix(b, hex('#c2461c'), (1 - edge / .07) * .55);
+    c = mix(c, b, lavaAmt[i] * .92);
+  }
+  if (tangleAmt[i] > 0) c = mix(c, COL.tangle, tangleAmt[i] * .7);
+  if (f & F_ESC) { c = mix(c, mix(hex('#5d4c40'), hex('#80705c'), vnoise(x * .8, y * .8)), .65); rocky = 1; }
+  if (f & F_CAVERIM) { c = mix(c, hex('#6b5a4c'), .7); rocky = 1; }
+  if (f & F_GUANO) { c = mix(c, mix(COL.rock, hex('#9b9284'), .5), .55); rocky = 1; if (vnoise(x * 1.7, y * 1.7) > .78) c = mix(c, [248, 246, 238], .7); }
+  if (rocky > 0) c = rockTex(c, x, y, rocky, h > .5 ? .35 : .45);
+  if (caveAmt[i] > 0) c = mix(c, hex('#0b0706'), caveAmt[i] * .95);
+  return c;
+}
+
+// ---------- projection ----------
+function proj(x, y, h) { return [x * S, 40 + (y * S - 48) * TILT - Math.max(h, 0) * ELEV]; }
+function pf(fx, fy) { return proj(fx * GW, fy * GH, Math.max(0, atf(fx, fy))); }
+function rgbs(c, k) { return 'rgb(' + (clamp(c[0] * k, 0, 255) | 0) + ',' + (clamp(c[1] * k, 0, 255) | 0) + ',' + (clamp(c[2] * k, 0, 255) | 0) + ')'; }
+
+// ---------- baked base layer ----------
+let base, borders, labels;
+const anim = { coast: [], surf: [], wavelets: [], curls: [], birds: [], bats: [], deep: [], water: [], glints: [] };
+function renderBase() {
+  base = layer(); ctx = base.x;
+  const r2 = mulberry(4242);
+  ctx.fillStyle = rgbs(COL.deep, 1); ctx.fillRect(0, 0, CW, CH);
+  const decor = [];
+  const cellH = S * TILT + .8;
+  for (let y = 0; y < GH; y++) {
+    for (let x = 0; x < GW; x++) {
+      const i = y * GW + x, h = H[i], f = feat[i], xs = x * SC, ys = y * SC;
+      const dx = (at(x + 1, y) - at(x - 1, y)) / (SC * 2), dy = (at(x, y + 1) - at(x, y - 1)) / (SC * 2);
+      const slope = Math.hypot(dx, dy) / 2;
+      let shade = clamp(1 + (-dx * 1.1 - dy * 1.8) * 11, .42, 1.5), c;
+      const [px, py] = proj(x, y, h);
+      if (h < 0) {
+        c = waterColor(h, xs, ys);
+        ctx.fillStyle = rgbs(c, 1); ctx.fillRect(px, py, S + .5, cellH);
+        if (h > -.03 && (at(x + 1, y) >= 0 || at(x - 1, y) >= 0 || at(x, y + 1) >= 0 || at(x, y - 1) >= 0)) {
+          ctx.fillStyle = 'rgba(255,255,255,.55)'; ctx.fillRect(px, py, S + .5, cellH);
+          if ((x + y) % 2 === 0) {     // coast point for the animated surf, with a normal pointing out to sea
+            let gx = at(x + 2, y) - at(x - 2, y), gy = at(x, y + 2) - at(x, y - 2); const L = Math.hypot(gx, gy) || 1;
+            anim.coast.push({ x, y, nx: -gx / L, ny: -gy / L, ph: (fbm(xs * .05, ys * .05, 2) * 6), rp: Math.random(), cliff: plat[i] > .35 });
+          }
+        }
+        if (h < -.103 && h > -.12 && fbm(xs * .1 + 9, ys * .1, 2) > .47 && fbm(xs * .03 + 40, ys * .03, 2) > .36 && (x + y) % 2 === 0) anim.surf.push({ x, y });
+        continue;
+      }
+      if (f & F_STREAM) { c = hex('#4fc8e0'); shade = 1.05; }
+      else c = landColor(h, moist[i], slope, f, xs, ys, i);
+      const vr = volR(x / GW, y / GH);
+      if (vr < .1) { c = mix(COL.crater, hex('#ff4a12'), clamp(1 - vr / .085, 0, 1)); shade = 1 + clamp(1 - vr / .085, 0, 1) * .3; }
+      if (f & F_RIM) shade *= 1.12;
+      if (f & F_LAVA) { c = mix(hex('#ff5a1a'), hex('#ffcf4a'), vnoise(xs * .5, ys * .5)); shade = 1.15; }
+      if (caveAmt[i] > 0) shade = lerp(shade, 1, caveAmt[i]);
+      ctx.fillStyle = rgbs(c, shade); ctx.fillRect(px, py, S + .5, cellH);
+      const drop = (h - Math.max(0, at(x, y + 1))) * ELEV;
+      if (drop > 0) {
+        const cliff = clamp((drop - 9) / 10, 0, 1);
+        let wc = mix(c, (f & F_GUANO) ? hex('#b3a896') : hex('#6e5646'), cliff * .75);
+        if (cliff > 0) wc = rockTex(wc, xs * 1.6, ys, cliff, .9);     // vertical-ish rock streaks on walls
+        ctx.fillStyle = rgbs(wc, shade * (1 - cliff * .2)); ctx.fillRect(px, py + S * TILT - .4, S + .5, drop + 1.2);
+        if (cliff > .5) { ctx.fillStyle = 'rgba(30,20,15,' + (.25 * cliff) + ')'; ctx.fillRect(px, py + S * TILT + drop * .55, S + .5, drop * .45 + 1); }
+      }
+      // decoration (densities are per old-size cell, so scale down)
+      const q = SC * SC * 1.3;
+      if (!(f & (F_LAVA | F_STREAM)) && caveAmt[i] === 0 && vr > 1.0) {
+        const nx = x / GW, ny = y / GH;
+        const rockyCell = (f & (F_ESC | F_GUANO | F_CAVERIM | F_LAVAFIELD)) || (h > .45 && slope > .03);
+        if (rockyCell) { if (r2() < .028 * q * (lavaAmt[i] > .3 ? 1.6 : 1)) decor.push(dec(x, y, h, 'rock', r2)); }
+        else if (tangleAmt[i] > .15) { if (r2() < .14 * q * tangleAmt[i]) decor.push(dec(x, y, h, 'tangle', r2)); }
+        else {
+          const dens = fbm(xs * .05 + 31, ys * .05 + 7, 3);
+          const inPalms = Math.hypot((nx - LM.palms[0]) / .06, (ny - LM.palms[1]) / .05) < 1;
+          const inFruit = Math.hypot((nx - LM.breadfruit[0]) / .035, (ny - LM.breadfruit[1]) / .03) < 1;
+          if (inFruit && h > .03) { if (r2() < .07 * q) decor.push(dec(x, y, h, 'breadfruit', r2)); }
+          else if (inPalms && h > .02) { if (r2() < .08 * q) decor.push(dec(x, y, h, 'palm', r2)); }
+          else if (h > .05 && h < .32 && r2() < .045 * q * dens * dens * 3) decor.push(dec(x, y, h, moist[i] > .47 || h > .16 ? 'tree' : 'palm', r2));
+          else if (h >= .012 && h < .05 && r2() < .03 * q) decor.push(dec(x, y, h, 'palm', r2));
+        }
+      }
+    }
+    for (let k = decor.length - 1; k >= 0; k--) if (decor[k].y === y) { drawDecor(decor[k]); decor.splice(k, 1); }
+  }
+  drawCrabs(r2); drawFlotsam(); drawBoobies(r2); drawSpringGlint(); drawCaveLip();
+  drawWreck(); drawCrater(); drawStartMarker();
+  setupAnim(r2);
+}
+
+// ---------- sprites ----------
+function dec(x, y, h, t, r) { return { x: x + (r() - .5) * 2, y, h, t, v: (r() * 4) | 0, s: .82 + r() * .4, k: r() }; }
+function shadow(px, py, w) { ctx.fillStyle = 'rgba(20,50,25,.33)'; ctx.beginPath(); ctx.ellipse(px + 3, py + 4, w, w * .42, 0, 0, Math.PI * 2); ctx.fill(); }
+function blob(x, y, r, col) { ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); }
+function poly(pts, col) { ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(pts[0], pts[1]); for (let k = 2; k < pts.length; k += 2) ctx.lineTo(pts[k], pts[k + 1]); ctx.closePath(); ctx.fill(); }
+const TREE_COLS = [['#2b7039', '#3c8a46'], ['#1f5a2e', '#2f7038'], ['#346f2c', '#4a8a3a'], ['#245e3a', '#2f7a4c']];
+const ROCK_COLS = [['#7c6a5a', '#9a8670', '#4e4238'], ['#6a6260', '#8c8480', '#403a38'], ['#806c58', '#a08a72', '#54463a'], ['#5c5450', '#7a726c', '#36302e']];
+function drawDecor(d) {
+  const [px, py] = proj(d.x, d.y, d.h), s = d.s;
+  ctx.save(); ctx.translate(px, py); ctx.scale(s, s);
+  if (d.t === 'tree') {
+    const [c1, c2] = TREE_COLS[(d.v + (d.h > .2 ? 1 : 0)) % 4];
+    if (d.v === 0) { shadow(0, 0, 7); blob(0, -3, 6, c1); blob(-2, -5, 3, 'rgba(255,255,255,.12)'); }
+    else if (d.v === 1) { shadow(0, 0, 9); blob(-4, -2, 4.5, c1); blob(4, -2, 4.5, c1); blob(0, -6, 5, c2); blob(-1, -8, 2.2, 'rgba(255,255,255,.12)'); }
+    else if (d.v === 2) { shadow(0, 0, 6); ctx.fillStyle = '#5a4128'; ctx.fillRect(-.8, -7, 1.6, 7); blob(0, -10, 5, c1); blob(-3, -8, 3.5, c1); blob(3, -8, 3.5, c2); blob(-1, -12, 2, 'rgba(255,255,255,.14)'); }
+    else { shadow(0, 0, 9); ctx.fillStyle = '#5a4128'; ctx.fillRect(-.7, -4, 1.4, 4); ctx.fillStyle = c1; ctx.beginPath(); ctx.ellipse(0, -6, 9, 4, 0, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = c2; ctx.beginPath(); ctx.ellipse(-1, -7.5, 6, 2.4, 0, 0, Math.PI * 2); ctx.fill(); }
+  } else if (d.t === 'rock') {
+    const [mid, lit, dark] = ROCK_COLS[(d.v + ((d.k * 10) | 0)) % 4];
+    ctx.fillStyle = 'rgba(15,10,8,.35)'; ctx.beginPath(); ctx.ellipse(2, 1.5, 6, 2.2, 0, 0, Math.PI * 2); ctx.fill();
+    if (d.v === 0) { poly([-5, 0, -4, -4, 0, -6, 4, -4, 5, 0], mid); poly([-4, -4, 0, -6, 1, -3, -3, -1], lit); poly([1, -3, 4, -4, 5, 0, 0, 0], dark); }
+    else if (d.v === 1) { poly([-6, 0, -5, -3, -1, -4, 1, 0], mid); poly([0, 0, 1, -5, 4, -7, 6, -4, 5, 0], mid); poly([1, -5, 4, -7, 4, -4, 2, -3], lit); poly([-5, -3, -1, -4, -2, -2], lit); poly([4, -4, 6, -4, 5, 0, 3, 0], dark); }
+    else if (d.v === 2) { poly([-7, 0, -6, -2, 6, -3, 7, 0], mid); poly([-6, -2, 6, -3, 4, -1.5, -5, -1], lit); poly([4, -1.5, 6, -3, 7, 0, 4, 0], dark); }
+    else { poly([-4, 0, -2, -8, 1, -3, 3, -6, 5, 0], mid); poly([-2, -8, 1, -3, -1, -1, -3, -2], lit); poly([3, -6, 5, 0, 2, 0], dark); }
+  } else if (d.t === 'breadfruit') {
+    shadow(0, 1, 9); blob(0, -4, 8 - d.v * .6, '#4f9a3a'); blob(-2, -6, 4.5, '#6dbb4a'); if (d.v % 2) blob(4, -6, 3.5, '#5aa83f');
+    [[-3, -1], [3, -3], [1, 1], [-1, -6]].slice(0, 2 + d.v % 3).forEach(([a, b]) => blob(a, -4 + b, 1.5, '#c7e06a'));
+  } else if (d.t === 'tangle') {
+    blob(0, -2, 5.5, ['#163521', '#1a3d26', '#14301e', '#1d4229'][d.v]);
+    ctx.strokeStyle = '#2c5a2c'; ctx.lineWidth = 1.2; ctx.beginPath();
+    if (d.v < 2) { ctx.moveTo(-6, -1); ctx.quadraticCurveTo(-2, -9, 5, -3); ctx.moveTo(-4, -5); ctx.quadraticCurveTo(1, 1, 6, -6); }
+    else { ctx.moveTo(-6, -4); ctx.quadraticCurveTo(0, -10, 6, -1); ctx.moveTo(-5, 0); ctx.quadraticCurveTo(-1, -6, 4, -8); }
+    ctx.stroke(); if (d.v === 3) blob(2, -6, 1.2, '#c0467a');
+  } else {
+    const lean = [0, -4, 4, 2][d.v], tall = 10 + d.k * 3;
+    const palm = (bx, lx, hgt, fronds) => {
+      ctx.strokeStyle = '#7a5a38'; ctx.lineWidth = 1.6; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(bx, 2); ctx.quadraticCurveTo(bx + lx * .2, -hgt * .5, bx + lx, -hgt); ctx.stroke();
+      ctx.strokeStyle = d.k > .5 ? '#3f8f3f' : '#4a9a40'; ctx.lineWidth = 2;
+      for (let a = 0; a < fronds; a++) { const an = -Math.PI + a * (Math.PI * 1.1 / (fronds - 1)) - .05; ctx.beginPath(); ctx.moveTo(bx + lx, -hgt); ctx.quadraticCurveTo(bx + lx + Math.cos(an) * 4, -hgt - 3 + Math.sin(an) * 2, bx + lx + Math.cos(an) * 8, -hgt + 2 + Math.sin(an) * 3); ctx.stroke(); }
+      if (d.k > .6) { blob(bx + lx - 1, -hgt + 1.5, 1.1, '#6b4a2b'); blob(bx + lx + 1, -hgt + 1.8, 1.1, '#6b4a2b'); }
+    };
+    if (d.v === 3) { palm(-2, -3, tall * .85, 5); palm(2, lean, tall, 6); } else palm(0, lean, tall, 5 + (d.v % 2));
+  }
+  ctx.restore();
+}
+function drawCaveLip() {
+  // a soft inner shadow and a lit lip so the mouth sits *in* the rock
+  const [px, py] = pf(LM.cave[0], LM.cave[1] + .004);
+  const g = ctx.createRadialGradient(px, py - 4, 1, px, py - 2, 16); g.addColorStop(0, 'rgba(0,0,0,.55)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(px, py - 3, 15, 9, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = 'rgba(190,165,135,.55)'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.ellipse(px, py - 1, 11, 4, 0, .1, Math.PI - .1); ctx.stroke();
+}
+function drawCrater() {
+  let best = null;
+  const r = Math.round(12 / SC);
+  for (let y = (VY * GH - r) | 0; y < VY * GH + r; y++) for (let x = (VX * GW - r) | 0; x < VX * GW + r; x++) { const q = proj(x, y, at(x, y)); if (!best || q[1] < best[1]) best = q; }
+  const px = VX * GW * S, py = best[1] + 4;
+  ctx.save(); ctx.translate(px, py + 6);
+  const rg = ctx.createRadialGradient(0, 0, 10, 0, 0, 30); rg.addColorStop(0, '#5a463c'); rg.addColorStop(1, 'rgba(74,64,60,0)');
+  ctx.fillStyle = rg; ctx.beginPath(); ctx.ellipse(0, 0, 32, 12, 0, 0, Math.PI * 2); ctx.fill();
+  const g = ctx.createRadialGradient(0, 1, 0, 0, 1, 18); g.addColorStop(0, '#2a1a14'); g.addColorStop(1, '#120b09');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.ellipse(0, 1, 19, 6.5, 0, 0, Math.PI * 2); ctx.fill();
+  const lg = ctx.createRadialGradient(2, 2, 0, 2, 2, 11); lg.addColorStop(0, '#fff2a0'); lg.addColorStop(.35, '#ffb02e'); lg.addColorStop(1, 'rgba(255,70,20,0)');
+  ctx.fillStyle = lg; ctx.beginPath(); ctx.ellipse(2, 2, 12, 4, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,200,150,.55)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.ellipse(0, 0, 24, 9, 0, Math.PI * 1.05, Math.PI * 1.95); ctx.stroke();
+  ctx.strokeStyle = 'rgba(30,20,18,.8)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.ellipse(0, 0, 24, 9, 0, Math.PI * .05, Math.PI * .95); ctx.stroke();
+  ctx.restore();
+  anim.crater = [px, py + 8];
+}
+function drawCrabs(r) {
+  for (let k = 0; k < 10; k++) {
+    const fx = LM.crabs[0] + (r() - .5) * .05, fy = LM.crabs[1] + (r() - .5) * .02;
+    const h = atf(fx, fy); if (h < 0 || h > .05) continue;
+    const [px, py] = proj(fx * GW, fy * GH, h);
+    ctx.fillStyle = '#e4572e'; ctx.beginPath(); ctx.ellipse(px, py, 2.4, 1.6, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillRect(px - 3.5, py - 1.5, 1.4, 1.4); ctx.fillRect(px + 2.1, py - 1.5, 1.4, 1.4);
+  }
+}
+function drawFlotsam() {
+  const [px, py] = pf(LM.flotsam[0], LM.flotsam[1]);
+  ctx.save(); ctx.translate(px, py);
+  ctx.fillStyle = '#a07850'; ctx.save(); ctx.rotate(.4); ctx.fillRect(-12, -2, 16, 3.5); ctx.restore();
+  ctx.save(); ctx.rotate(-.3); ctx.fillRect(2, 3, 14, 3); ctx.restore();
+  ctx.fillStyle = '#8b5e34'; ctx.fillRect(-4, -9, 9, 7); ctx.strokeStyle = '#5a3b22'; ctx.lineWidth = 1; ctx.strokeRect(-4, -9, 9, 7);
+  ctx.fillStyle = '#2b2b2b'; ctx.fillRect(8, -6, 9, 6); ctx.fillStyle = '#c9a24a'; ctx.fillRect(11.5, -7, 2, 1.4);
+  ctx.restore();
+}
+function drawBoobies(r) {
+  const [px, py] = pf(LM.birds[0], LM.birds[1]);
+  for (let k = 0; k < 6; k++) {
+    const x = px + (r() - .5) * 40, y = py + (r() - .5) * 14;
+    ctx.fillStyle = '#f5f2ea'; ctx.beginPath(); ctx.ellipse(x, y - 3, 2, 3, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#3fb4e8'; ctx.fillRect(x - 2, y, 1.5, 1.2); ctx.fillRect(x + .5, y, 1.5, 1.2);
+  }
+}
+function drawSpringGlint() {
+  const [px, py] = pf(LM.spring[0], LM.spring[1]);
+  ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.ellipse(px, py + 1, 6, 2.2, 0, 0, Math.PI * 2); ctx.stroke();
+}
+function drawWreck() {
+  let best = null;
+  for (let y = 0; y < GH; y += 2) for (let x = (GW * .78) | 0; x < GW; x += 2) { const h = at(x, y); if (h < -.10 && h > -.12 && Math.abs(y - GH * .5) < GH * .25) { if (!best || x > best.x) best = { x, y }; } }
+  if (!best) return;
+  const [px, py] = proj(best.x, best.y, 0);
+  LM.wreck = [best.x / GW, best.y / GH];
+  ctx.save(); ctx.translate(px, py); ctx.rotate(-.35);
+  ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.beginPath(); ctx.ellipse(2, 6, 26, 6, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#ece8f2'; ctx.beginPath(); ctx.moveTo(-26, 0); ctx.lineTo(24, 0); ctx.lineTo(18, 7); ctx.lineTo(-22, 7); ctx.closePath(); ctx.fill();
+  ctx.fillRect(-14, -6, 22, 6); ctx.fillRect(-7, -10, 12, 4);
+  ctx.fillStyle = '#39e639'; ctx.fillRect(-12, -3, 18, 1.6);
+  ctx.fillStyle = '#5b6b7a'; ctx.fillRect(-12, -5, 3, 2); ctx.fillRect(-6, -5, 3, 2); ctx.fillRect(0, -5, 3, 2);
+  ctx.restore();
+}
+function drawStartMarker() {
+  let best = null, bd = 1e9;
+  seeds.forEach(s => { if (s.reg !== 1) return; const d = Math.hypot(s.x / GW - LM.crabs[0], s.y / GH - LM.crabs[1]); if (d < bd) { bd = d; best = s; } });
+  const fx = LM.crabs[0] - .012, fy = LM.crabs[1] - .006;          // the flag stands on the crab beach itself
+  const [px, py] = proj(fx * GW, fy * GH, Math.max(0, atf(fx, fy)));
+  ctx.strokeStyle = 'rgba(255,246,227,.95)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.ellipse(px, py, 16, 9, 0, 0, Math.PI * 2); ctx.stroke();
+  ctx.fillStyle = '#5a3b22'; ctx.fillRect(px - 1, py - 22, 2, 22);
+  ctx.fillStyle = '#39e639'; ctx.beginPath(); ctx.moveTo(px + 1, py - 22); ctx.lineTo(px + 12, py - 18); ctx.lineTo(px + 1, py - 14); ctx.fill();
+}
+
+// ---------- borders & labels (cached layers) ----------
+function renderBorders() {
+  borders = layer(); ctx = borders.x;
+  for (let y = 0; y < GH - 1; y++) for (let x = 0; x < GW - 1; x++) {
+    const i = y * GW + x, r = region[i]; if (r < 0) continue;
+    const rr = region[i + 1], rb = region[i + GW];
+    const diffR = rr !== r && rr >= 0, diffB = rb !== r && rb >= 0;
+    if (!diffR && !diffB) continue;
+    const other = diffR ? rr : rb, regBorder = regOf(seeds[r].reg) !== regOf(seeds[other].reg);
+    const [px, py] = proj(x + .5, y + .5, H[i]);
+    if (regBorder) { if ((x + y) % 2 === 0) { ctx.fillStyle = 'rgba(255,224,140,.8)'; ctx.fillRect(px - 1.1, py - 1.1, 2.4, 2.4); } }
+    else if ((x + y) % 4 === 0) { ctx.fillStyle = H[i] < 0 ? 'rgba(255,255,255,.25)' : 'rgba(255,250,220,.4)'; ctx.fillRect(px - 1, py - 1, 2, 2); }
+  }
+}
+function roundRect(x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
+function label(fx, fy, txt, o) {
+  o = o || {}; const [px, py] = pf(fx, fy);
+  ctx.font = o.big ? "600 22px 'Fredoka'" : o.lock ? "600 12px 'Fredoka'" : "400 17px 'Patrick Hand'";
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
+  if (o.lock) { const w = ctx.measureText(txt).width + 16; ctx.fillStyle = 'rgba(30,25,20,.62)'; roundRect(px - w / 2, py - 10, w, 20, 10); ctx.fill(); ctx.fillStyle = '#ffe08a'; ctx.fillText(txt, px, py + .5); }
+  else { ctx.strokeStyle = 'rgba(20,30,25,.65)'; ctx.lineWidth = o.big ? 5 : 4; ctx.strokeText(txt, px, py); ctx.fillStyle = o.big ? 'rgba(' + o.col + ',1)' : '#fff6e3'; ctx.fillText(txt, px, py); }
+  ctx.textBaseline = 'alphabetic';
+}
+function cpos(c) { return [c[0] / c[2] / GW, c[1] / c[2] / GH]; }
+function renderLabels() {
+  labels = layer(); ctx = labels.x;
+  const off = { 1: [0, .02], 2: [-.02, 0], 3: [.12, -.13], 4: [.03, .08] };
+  [1, 2, 3, 4].forEach(r => { if (!REG_C[r]) return; const [fx, fy] = cpos(REG_C[r]); label(fx + off[r][0], fy + off[r][1], ['', 'I', 'II', 'III', 'IV'][r] + ' · ' + REGIONS[r].name, { big: true, col: REGIONS[r].col }); });
+  label(LM.bay[0], LM.bay[1] + .035, 'the cove');
+  label(LM.palms[0] - .025, LM.palms[1] - .015, 'palm grove');
+  label(LM.spring[0] + .03, LM.spring[1] - .01, 'spring');
+  label(LM.breadfruit[0] + .005, LM.breadfruit[1] - .03, 'breadfruit');
+  label(LM.crabs[0] + .03, LM.crabs[1] + .02, 'crab beach');
+  label(LM.flotsam[0] - .02, LM.flotsam[1] + .02, 'flotsam');
+  label(LM.birds[0], LM.birds[1] + .06, 'booby rocks');
+  label(LM.cave[0] - .035, LM.cave[1] + .025, 'bat cave');
+  label(LM.lagoon[0], LM.lagoon[1] + .02, 'lagoon');
+  label(LM.riptide[0], LM.riptide[1] + .02, 'riptide');
+  if (LM.wreck) label(LM.wreck[0] - .02, LM.wreck[1] + .05, 'the wreck');
+  const sign = (key, txt, dx, dy) => { if (BORDER_C[key]) { const [fx, fy] = cpos(BORDER_C[key]); label(fx + (dx || 0), fy + (dy || 0), txt, { lock: true }); } };
+  sign('1-2', '⛰ climb · gecko');
+  sign('1-3', '🔥 lava fields · too hot', 0, .01);
+  sign('1-4', '🌿 the tangle · talk to plants', .015, .03);
+  sign('3-4', '🌿 the tangle', .01, -.02);
+  label(LM.cave[0] + .01, LM.cave[1] + .05, '🦇 dark · bats', { lock: true });
+  label(LM.lagoon[0] + .02, LM.lagoon[1] - .05, '🐙 dive · octopus', { lock: true });
+  if (LM.wreck) label(LM.wreck[0] - .03, LM.wreck[1] - .045, '🐋 open sea · manta', { lock: true });
+}
+
+// ---------- animation layer ----------
+const hash = n => { const v = Math.sin(n * 127.1 + 311.7) * 43758.5453; return v - Math.floor(v); };
+const env = u => { const s = Math.sin(u * Math.PI); return s * s; };          // smooth 0→1→0 fade, no pops
+function setupAnim(r) {
+  // pools of water positions: deep sea for wavelets, any water for sun glints (denser in the glare band)
+  for (let k = 0; k < 9000 && anim.deep.length < 900; k++) { const fx = r(), fy = .03 + r() * .94; if (atf(fx, fy) < -.17) anim.deep.push([fx, fy]); }
+  for (let k = 0; k < 20000 && anim.water.length < 1400; k++) {
+    const fx = r(), fy = .03 + r() * .94, h = atf(fx, fy); if (h > -.01) continue;
+    const glare = Math.exp(-Math.pow((fx - .78) / .22, 2) - Math.pow((fy - .2) / .18, 2));
+    if (r() < .25 + glare * .75) anim.water.push([fx, fy, glare, -h]);
+  }
+  for (let k = 0; k < 70; k++) anim.wavelets.push({ P: 6 + r() * 6, o: r() * 50, w: 9 + r() * 16, tint: (r() * 3) | 0, id: k * 13.7 });
+  for (let k = 0; k < 90; k++) anim.glints.push({ P: 1.4 + r() * 2.2, o: r() * 20, id: k * 7.3, s: 1.5 + r() * 2.5 });
+  // open-sea wavelets: stylised curls drifting slowly
+  let tries = 0;
+
+  // riptide: bigger curls off the cove
+  for (let k = 0; k < 14; k++) {
+    const fx = LM.riptide[0] + (r() - .5) * .32, fy = LM.riptide[1] + (r() - .5) * .08;
+    if (atf(fx, fy) > -.14) continue;
+    anim.curls.push({ fx, fy, w: 18 + r() * 22, ph: r() * 6.28 });
+  }
+  for (let k = 0; k < 11; k++) anim.birds.push({ a: r() * 6.28, rr: 40 + r() * 55, sp: .12 + r() * .12, h: 25 + r() * 40, fl: r() * 6.28, s: 3 + r() * 2.5 });
+  for (let k = 0; k < 5; k++) anim.bats.push({ a: r() * 6.28, rr: 10 + r() * 14, sp: .9 + r() * .8, h: 14 + r() * 16 });
+}
+function drawAnim(t) {
+  const c = mainCtx;
+  // coastal surf: foam fronts roll out from the shore, white turning aqua, with soft fade in and out
+  const FOAM = ['#ffffff', '#e4fbf6', '#bff3ec', '#9fe9e4'];
+  for (let pass = 0; pass < 2; pass++) {
+    for (const p of anim.coast) {
+      const q = ((t * .11 + p.ph * .22 + pass * .5 + p.rp * .08) % 1 + 1) % 1;
+      const e = env(q) * (p.cliff ? .75 : .55);
+      if (e < .03) continue;
+      const off = q * (p.cliff ? 3 : 6), [px, py] = proj(p.x + p.nx * off, p.y + p.ny * off, 0);
+      c.globalAlpha = e; c.fillStyle = FOAM[Math.min(3, (q * 4) | 0)]; c.fillRect(px - .4, py, 2.6, 1.4);
+    }
+  }
+  // reef surf: crests travel along the reef and fade smoothly
+  c.fillStyle = '#ffffff';
+  for (const p of anim.surf) {
+    const w = .5 + .5 * Math.sin(t * .8 + p.x * .045 + p.y * .03), a = w * w * w * .6;
+    if (a < .03) continue;
+    c.globalAlpha = a; const [px, py] = proj(p.x, p.y, 0); c.fillRect(px, py, 2.4, 1.6);
+  }
+  c.globalAlpha = 1;
+  // shallow-water shimmer: slow light bands drifting through lagoon and cove
+  c.globalCompositeOperation = 'lighter';
+  for (const [fx, fy, w] of [[LM.lagoon[0], LM.lagoon[1], 70], [LM.bay[0], LM.bay[1] + .01, 40]]) {
+    const [px, py] = pf(fx, fy);
+    for (let k = 0; k < 3; k++) {
+      const u = ((t * .07 + k / 3) % 1), x = px - w + u * w * 2, a = env(u) * .10;
+      const g = c.createRadialGradient(x, py + (k - 1) * 8, 0, x, py + (k - 1) * 8, w * .5);
+      g.addColorStop(0, 'rgba(210,255,245,' + a + ')'); g.addColorStop(1, 'rgba(210,255,245,0)');
+      c.fillStyle = g; c.fillRect(x - w * .5, py - w * .5 + (k - 1) * 8, w, w);
+    }
+  }
+  c.globalCompositeOperation = 'source-over';
+  // open-sea wavelets: each lives one cycle (fade in, drift, fade out) then reappears elsewhere
+  const WT = [[232, 250, 255], [175, 240, 235], [150, 215, 245]];
+  c.lineCap = 'round';
+  for (const w of anim.wavelets) {
+    const tt = t + w.o, cyc = Math.floor(tt / w.P), u = tt / w.P - cyc;
+    const pt = anim.deep[(hash(cyc + w.id) * anim.deep.length) | 0]; if (!pt) continue;
+    const a = env(u) * .42, [px0, py] = pf(pt[0], pt[1]), px = px0 + (u - .5) * 14, ww = w.w * (.7 + .3 * env(u));
+    const col = WT[w.tint];
+    c.strokeStyle = 'rgba(10,70,105,' + a * .6 + ')'; c.lineWidth = 1.6;            // dark trough under the crest
+    c.beginPath(); c.moveTo(px - ww, py + 1.6); c.quadraticCurveTo(px - ww * .3, py - 2.4, px, py + .6); c.quadraticCurveTo(px + ww * .3, py + 3.6, px + ww * .6, py + .6); c.stroke();
+    c.strokeStyle = 'rgba(' + col[0] + ',' + col[1] + ',' + col[2] + ',' + a + ')'; c.lineWidth = 1.4;
+    c.beginPath(); c.moveTo(px - ww, py); c.quadraticCurveTo(px - ww * .3, py - 4, px, py - 1); c.quadraticCurveTo(px + ww * .3, py + 2, px + ww * .6, py - 1); c.stroke();
+  }
+  for (const w of anim.curls) {
+    const u = ((t * .09 + w.ph) % 1), a = env(u) * .5;
+    const [px0, py] = pf(w.fx, w.fy), px = px0 + (u - .5) * 26;
+    c.strokeStyle = 'rgba(10,70,105,' + a * .5 + ')'; c.lineWidth = 2;
+    c.beginPath(); c.moveTo(px - w.w, py + 2); c.quadraticCurveTo(px, py - 5, px + w.w * .6, py + 1); c.stroke();
+    c.strokeStyle = 'rgba(225,248,255,' + a + ')'; c.lineWidth = 1.7;
+    c.beginPath(); c.moveTo(px - w.w, py); c.quadraticCurveTo(px, py - 7, px + w.w * .6, py - 1); c.quadraticCurveTo(px + w.w * .9, py + 2, px + w.w * .6, py + 5); c.stroke();
+  }
+  // sun glints: little star sparkles, most of them in the glare band
+  c.globalCompositeOperation = 'lighter';
+  for (const g of anim.glints) {
+    const tt = t + g.o, cyc = Math.floor(tt / g.P), u = tt / g.P - cyc;
+    const pt = anim.water[(hash(cyc * 3.1 + g.id) * anim.water.length) | 0]; if (!pt) continue;
+    const e = Math.pow(Math.sin(u * Math.PI), 4) * (.45 + .55 * pt[2]); if (e < .03) continue;
+    const [px, py] = pf(pt[0], pt[1]), s = g.s * (.6 + .6 * e) * (pt[3] < .05 ? .7 : 1);
+    c.fillStyle = 'rgba(255,250,225,' + e + ')';
+    c.fillRect(px - s, py - .35, s * 2, .7); c.fillRect(px - .35, py - s * .7, .7, s * 1.4);
+    c.fillStyle = 'rgba(255,255,255,' + e * .9 + ')'; c.fillRect(px - .7, py - .7, 1.4, 1.4);
+  }
+  c.globalCompositeOperation = 'source-over';
+  // crater & lava glow, gently pulsing
+  if (anim.crater) {
+    const [cx, cy] = anim.crater, pulse = .45 + .18 * Math.sin(t * 1.3);
+    c.globalCompositeOperation = 'lighter';
+    const g = c.createRadialGradient(cx, cy, 0, cx, cy, 46); g.addColorStop(0, 'rgba(255,140,40,' + pulse + ')'); g.addColorStop(1, 'rgba(255,90,20,0)');
+    c.fillStyle = g; c.fillRect(cx - 50, cy - 50, 100, 100);
+    for (let k = 0; k <= 8; k++) {
+      const [qx, qy] = pf(lerp(VX + .04, VX + .14, k / 8), lerp(VY - .035, VY - .16, k / 8));
+      const gg = c.createRadialGradient(qx, qy, 0, qx, qy, 14), pa = .18 + .12 * Math.sin(t * 2 - k * .7);
+      gg.addColorStop(0, 'rgba(255,110,30,' + pa + ')'); gg.addColorStop(1, 'rgba(255,110,30,0)');
+      c.fillStyle = gg; c.fillRect(qx - 15, qy - 15, 30, 30);
+    }
+    c.globalCompositeOperation = 'source-over';
+    // smoke: puffs rise, drift east and fade, looping
+    for (let k = 0; k < 12; k++) {
+      const q = ((t * .045 + k / 12) % 1), r = 8 + q * 64;
+      const sx = cx + q * 120 + Math.sin(q * 6 + k) * 8, sy = cy - 22 - q * 210;
+      const a = Math.sin(Math.min(1, q * 6) * Math.PI / 2) * (1 - q) * .75;
+      const sg = c.createRadialGradient(sx, sy, 0, sx, sy, r); sg.addColorStop(0, 'rgba(240,236,230,' + a + ')'); sg.addColorStop(1, 'rgba(240,236,230,0)');
+      c.fillStyle = sg; c.beginPath(); c.arc(sx, sy, r, 0, Math.PI * 2); c.fill();
+    }
+  }
+  // seabirds circling over the booby rocks
+  const [bx, by] = pf(LM.birds[0], LM.birds[1]);
+  c.strokeStyle = 'rgba(255,255,255,.92)'; c.lineWidth = 1.4;
+  for (const b of anim.birds) {
+    const a = b.a + t * b.sp, x = bx + Math.cos(a) * b.rr, y = by - b.h + Math.sin(a) * b.rr * .35, f = Math.sin(t * 5 + b.fl) * .6, s = b.s;
+    c.beginPath(); c.moveTo(x - s, y - f * s); c.quadraticCurveTo(x - s / 2, y - s * .7, x, y); c.quadraticCurveTo(x + s / 2, y - s * .7, x + s, y - f * s); c.stroke();
+  }
+  // bats fluttering at the cave mouth
+  const [vx, vy] = pf(LM.cave[0], LM.cave[1]);
+  c.fillStyle = '#1a1414';
+  for (const b of anim.bats) {
+    const a = b.a + t * b.sp, x = vx + Math.cos(a) * b.rr, y = vy - b.h + Math.sin(a * 1.7) * 5, f = Math.sin(t * 14 + b.a) * 2;
+    c.beginPath(); c.moveTo(x - 4, y - f); c.quadraticCurveTo(x - 2, y - 2.5, x, y); c.quadraticCurveTo(x + 2, y - 2.5, x + 4, y - f); c.quadraticCurveTo(x, y + 1.2, x - 4, y - f); c.fill();
+  }
+}
+function vignette(c) {
+  const g = c.createRadialGradient(CW / 2, CH / 2, CH * .35, CW / 2, CH / 2, CH * .95);
+  g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,15,30,.45)');
+  c.fillStyle = g; c.fillRect(0, 0, CW, CH);
+}
+// =====================================================================
+// GAME LAYER — exploration, roots and the rot (map prototype v002)
+// Rules follow the rulebook draft: fog of war, Gezeit as action points,
+// cat scouting, banyan roots, telegraphed rot attacks resolved at flood.
+// v002: omen as hard filter, fog mask with real cat scouting, organic
+// roots, louder rot, banyan marker, tortoise + briefcase storytelling.
+// =====================================================================
+const RULES = {
+  gezeitStart: 8, targetsPerFlood: 2, greenPerTide: 3, greenStart: 6,
+  harvestYield: 2, accountantBonus: 1, exhaustTides: 3,
+  costMove: { beach: 1, grove: 1, jungle: 2, slope: 2, tangle: 2, lava: 2, water: 99 },
+  nestBlight: 2, wreckBlight: 3, rootThresh1: 10, rootThresh2: 20,
+  catSpeed: 62, catRadius: 30, scoutCover: .6,
+  nourishCost: 4, nourishGreen: 2, offerCost: 1, offerWandel: 3, banyanMax: 5, maxRot: 3, maxRoot: 3, merge: 1 / 3
+};
+const STAGES = [[0, 'Accountant'], [5, 'Castaway'], [10, 'Synthesis'], [15, 'Islander'], [20, 'Surrender']];
+const OMEN_TYPES = ['beach', 'grove', 'jungle', 'slope'];
+const T = [];                       // tiles
+const BP = {};                      // border points per ordered tile pair 'a_b' (on a's side)
+const G = {
+  start: -1, banyan: -1, gecko: -1, fruit: -1, flotsam: -1, nest: -1, wreck: -1, coco: [],
+  at: -1, gezeit: RULES.gezeitStart, gmax: RULES.gezeitStart, wandel: 0,
+  res: { fruit: 0, coco: 0, green: RULES.greenStart }, friends: {}, regionOpen: { 1: true },
+  tide: 1, omen: null, deck: [], targets: [], tinfo: {}, phase: 'ebb', sel: -1, over: false, blevel: 0, nests: [], talk: {},
+  floats: [], group: { x: 0, y: 0, tx: 0, ty: 0, t: 1 }, cat: null, catQ: [], stateDirty: true, memories: [],
+  moves: 0, now: 0, lastStage: 'Accountant', fogDirty: true, knownDirty: true, flash: -1
+};
+let pick, stateLayer;
+const $ = id => document.getElementById(id);
+
+// ---------- tile graph from the voronoi regions ----------
+function buildGame() {
+  const n = seeds.length;
+  for (let k = 0; k < n; k++) T.push({ id: k, reg: seeds[k].reg, sx: 0, sy: 0, cnt: 0, hs: 0, lava: 0, tangle: 0, nb: new Set(), border: [], samp: [], state: 0, b: 0, prot: false, exh: 0, rooted: false, rs: 0, rootBorn: 0, content: null, name: '', coast: false, minx: 1e9, miny: 1e9, maxx: -1e9, maxy: -1e9 });
+  const paths = T.map(() => new Path2D());
+  const cellH = S * TILT + .8;
+  pick = document.createElement('canvas'); pick.width = CW; pick.height = CH;
+  const pc = pick.getContext('2d', { willReadFrequently: true });
+  const bpPush = (a, b, p) => { const k = a + '_' + b; (BP[k] || (BP[k] = [])).push(p); };
+  for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) {
+    const i = y * GW + x, r = region[i]; if (r < 0) continue;
+    const t = T[r], h = H[i];
+    t.sx += x; t.sy += y; t.cnt++; t.hs += Math.max(0, h);
+    if (lavaAmt[i] > .3) t.lava++; if (tangleAmt[i] > .3) t.tangle++;
+    const rr = x < GW - 1 ? region[i + 1] : -1, rb = y < GH - 1 ? region[i + GW] : -1;
+    if (rr >= 0 && rr !== r) { t.nb.add(rr); T[rr].nb.add(r); }
+    if (rb >= 0 && rb !== r) { t.nb.add(rb); T[rb].nb.add(r); }
+    if (h >= 0 && ((x < GW - 1 && H[i + 1] < 0) || (y < GH - 1 && H[i + GW] < 0))) t.coast = true;
+    const [px, py] = proj(x, y, h), drop = h > 0 ? Math.max(0, (h - Math.max(0, at(x, y + 1))) * ELEV) : 0, ext = h >= 0 ? 6 : 0;
+    paths[r].rect(px, py - ext, S + .6, cellH + drop + ext);
+    t.minx = Math.min(t.minx, px); t.maxx = Math.max(t.maxx, px + S); t.miny = Math.min(t.miny, py - ext); t.maxy = Math.max(t.maxy, py + cellH + drop);
+    pc.fillStyle = 'rgb(' + (r + 1) + ',0,0)'; pc.fillRect(Math.floor(px), Math.floor(py), Math.ceil(S) + 1, Math.ceil(cellH + drop) + 1);
+    if ((rr !== r || rb !== r) && (x + y) % 3 === 0) t.border.push([px + 1, py + 1]);
+    if (x % 5 === 0 && y % 5 === 0) t.samp.push([px + 1, py + 1]);
+    if ((x + y) % 2 === 0) {
+      if (rr >= 0 && rr !== r) { bpPush(r, rr, [px + 1, py + 1]); const [qx, qy] = proj(x + 1, y, H[i + 1]); bpPush(rr, r, [qx + 1, qy + 1]); }
+      if (rb >= 0 && rb !== r) { bpPush(r, rb, [px + 1, py + 1]); const [qx, qy] = proj(x, y + 1, H[i + GW]); bpPush(rb, r, [qx + 1, qy + 1]); }
+    }
+  }
+  T.forEach(t => {
+    t.cx = t.sx / t.cnt; t.cy = t.sy / t.cnt; const mh = t.hs / t.cnt;
+    t.type = t.reg === 5 ? 'water' : t.lava > t.cnt * .3 ? 'lava' : t.tangle > t.cnt * .3 ? 'tangle' : mh < .06 ? 'beach' : mh < .2 ? 'grove' : mh < .4 ? 'jungle' : 'slope';
+    t.path = paths[t.id];
+    t.name = { beach: 'Beach', grove: 'Grove', jungle: 'Jungle', slope: 'Mountain slope', tangle: 'The tangle', lava: 'Lava fields', water: 'Reef waters' }[t.type];
+    if (t.reg === 2) t.name = t.type === 'beach' ? 'Cliff edge' : 'Cliff-top ' + t.name.toLowerCase();
+  });
+  // landmarks → tiles
+  const used = new Set();
+  const tileAtF = (fx, fy, want) => {
+    let r = region[(fy * GH | 0) * GW + (fx * GW | 0)];
+    if (r < 0 || T[r].reg !== want || used.has(r)) {
+      let best = -1, bd = 1e9;
+      T.forEach(t => { if (t.reg !== want || used.has(t.id)) return; const d = Math.hypot(t.cx / GW - fx, t.cy / GH - fy); if (d < bd) { bd = d; best = t.id; } });
+      r = best;
+    }
+    used.add(r); return r;
+  };
+  G.start = tileAtF(LM.crabs[0], LM.crabs[1], 1);
+  G.banyan = tileAtF(LM.spring[0], LM.spring[1], 1);
+  G.gecko = tileAtF(LM.palms[0], LM.palms[1], 1);
+  G.fruit = tileAtF(LM.breadfruit[0], LM.breadfruit[1], 1);
+  G.flotsam = tileAtF(LM.flotsam[0], LM.flotsam[1], 1);
+  const st = T[G.start]; st.name = 'Crab Beach'; st.content = { kind: 'start' }; st.state = 2;
+  T[G.banyan].name = 'The spring'; T[G.banyan].content = { kind: 'banyan', icon: '🌿' };
+  T[G.gecko].name = 'Palm grove'; T[G.gecko].content = { kind: 'gecko', icon: '🦎' };
+  T[G.fruit].name = 'Breadfruit grove'; T[G.fruit].content = { kind: 'res', res: 'fruit', icon: '🍞' };
+  T[G.flotsam].name = 'Flotsam cove'; T[G.flotsam].content = { kind: 'memory', icon: '✦' };
+  T.filter(t => t.reg === 1 && !used.has(t.id) && (t.type === 'beach' || t.type === 'grove')).slice(0, 2).forEach(t => { t.name = 'Coconut palms'; t.content = { kind: 'res', res: 'coco', icon: '🥥' }; used.add(t.id); G.coco.push(t.id); });
+  let nest = -1;
+  T.forEach(t => { if (t.reg !== 1 || used.has(t.id) || !t.coast) return; if (nest < 0 || t.cx > T[nest].cx) nest = t.id; });
+  const mkNest = (id, name) => { if (id < 0) return; T[id].b = RULES.nestBlight; T[id].source = 'nest'; T[id].name = name; used.add(id); G.nests.push(id); };
+  if (nest >= 0) { G.nest = nest; mkNest(nest, 'Rotting shore'); }
+  // region II: on the cliff edge right next to the cove, nearest the palm grove — it will spill over
+  { let best = -1, bd = 1e9; T.forEach(t => { if (t.reg !== 2 || used.has(t.id) || ![...t.nb].some(n => T[n].reg === 1)) return; const d = Math.hypot(t.cx - T[G.gecko].cx, t.cy - T[G.gecko].cy); if (d < bd) { bd = d; best = t.id; } }); mkNest(best, 'Rotting cliffs'); }
+  // region III and IV: deep inside, under the clouds
+  for (const [reg, lm, name] of [[3, [VX, VY], 'Rotting slope'], [4, LM.lagoon, 'Rotting lagoon shore']]) {
+    let best = -1, bd = 1e9; T.forEach(t => { if (t.reg !== reg || used.has(t.id)) return; const d = Math.hypot(t.cx / GW - lm[0], t.cy / GH - lm[1]); if (d < bd) { bd = d; best = t.id; } }); mkNest(best, name);
+  }
+  if (LM.wreck) { const r = region[(LM.wreck[1] * GH | 0) * GW + (LM.wreck[0] * GW | 0)]; if (r >= 0) { G.wreck = r; T[r].b = RULES.wreckBlight; T[r].source = 'wreck'; T[r].name = 'The wreck'; } }
+  const br = region[(LM.birds[1] * GH | 0) * GW + (LM.birds[0] * GW | 0)]; if (br >= 0 && T[br].reg === 2) T[br].name = 'Booby rocks';
+  T.forEach(t => { if (t.reg === 3 && t.type !== 'lava' && !t.source) t.name = t.type === 'slope' ? 'Fire Mountain' : t.name; });
+  buildSprites(); buildFog();
+  G.at = G.start; const [gx, gy] = tileXY(G.start); Object.assign(G.group, { x: gx, y: gy, tx: gx, ty: gy, t: 1 });
+  newDeck(); planFlood();
+}
+function tileXY(id) { const t = T[id]; const i = (t.cy | 0) * GW + (t.cx | 0); return proj(t.cx, t.cy, Math.max(0, H[i] || 0)); }
+
+// ---------- tint sprites + fog mask ----------
+function makeCloudPattern() {
+  const c = document.createElement('canvas'); c.width = c.height = 256; const x = c.getContext('2d'), r = mulberry(99);
+  x.fillStyle = '#e9f1f3'; x.fillRect(0, 0, 256, 256);
+  for (let k = 0; k < 70; k++) {
+    const cx = r() * 256, cy = r() * 256, rad = 18 + r() * 46, g = x.createRadialGradient(cx, cy, 0, cx, cy, rad);
+    const tone = r() < .5 ? '255,255,255' : '205,220,228';
+    g.addColorStop(0, 'rgba(' + tone + ',.75)'); g.addColorStop(1, 'rgba(' + tone + ',0)');
+    for (const [ox, oy] of [[0, 0], [256, 0], [-256, 0], [0, 256], [0, -256]]) { x.save(); x.translate(ox, oy); x.fillStyle = g; x.fillRect(cx - rad, cy - rad, rad * 2, rad * 2); x.restore(); }
+  }
+  return c;
+}
+function buildSprites() {
+  T.forEach(t => {
+    const pad = 4, bx = Math.floor(t.minx - pad), by = Math.floor(t.miny - pad), bw = Math.ceil(t.maxx - bx + pad), bh = Math.ceil(t.maxy - by + pad);
+    t.bb = [bx, by, bw, bh];
+    const c = document.createElement('canvas'); c.width = Math.max(1, bw * K); c.height = Math.max(1, bh * K); const x = c.getContext('2d'); x.setTransform(K, 0, 0, K, -bx * K, -by * K); x.fillStyle = '#ffffff'; x.fill(t.path);
+    t.tint = c;
+  });
+}
+// Fog = cloud texture minus (known tiles) minus (cat trails at 62 %). Low-res masks, recomposed only when dirty.
+const FS = .5, MS = .25;
+const FOG = {};
+function cvs(w, h, rf) { const c = document.createElement('canvas'); c.width = w; c.height = h; return { c, x: c.getContext('2d', rf ? { willReadFrequently: true } : undefined) }; }
+function buildFog() {
+  const fw = CW * FS | 0, fh = CH * FS | 0, mw = CW * MS | 0, mh = CH * MS | 0;
+  FOG.cloud = cvs(fw, fh); FOG.out = cvs(fw, fh); FOG.known = cvs(mw, mh); FOG.scout = cvs(mw, mh, true);
+  const union = cvs(fw, fh);
+  union.x.setTransform(FS, 0, 0, FS, 0, 0); union.x.filter = 'blur(1.5px)';
+  T.forEach(t => { const [bx, by, bw, bh] = t.bb; union.x.drawImage(t.tint, bx, by, bw, bh); });
+  const c = FOG.cloud.x; c.setTransform(FS, 0, 0, FS, 0, 0);
+  c.fillStyle = c.createPattern(makeCloudPattern(), 'repeat'); c.fillRect(0, 0, CW, CH);
+  c.setTransform(1, 0, 0, 1, 0, 0); c.globalCompositeOperation = 'destination-in'; c.drawImage(union.c, 0, 0); c.globalCompositeOperation = 'source-over';
+}
+function composeKnown() {
+  const c = FOG.known.x; c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, FOG.known.c.width, FOG.known.c.height);
+  c.setTransform(MS, 0, 0, MS, 0, 0); c.filter = 'blur(2px)';
+  T.forEach(t => { if (t.state < 2) return; const [bx, by, bw, bh] = t.bb; c.drawImage(t.tint, bx, by, bw, bh); });
+  c.filter = 'none'; G.knownDirty = false; G.fogDirty = true;
+}
+function composeFog() {
+  if (G.knownDirty) composeKnown();
+  const c = FOG.out.x, w = FOG.out.c.width, h = FOG.out.c.height;
+  c.globalCompositeOperation = 'source-over'; c.globalAlpha = 1; c.clearRect(0, 0, w, h); c.drawImage(FOG.cloud.c, 0, 0);
+  c.globalCompositeOperation = 'destination-out'; c.drawImage(FOG.known.c, 0, 0, w, h);
+  c.globalAlpha = .62; c.drawImage(FOG.scout.c, 0, 0, w, h);
+  c.globalAlpha = 1; c.globalCompositeOperation = 'source-over'; G.fogDirty = false;
+}
+function revealAt(x, y, r) {
+  const c = FOG.scout.x, sx = x * MS, sy = y * MS, sr = r * MS, g = c.createRadialGradient(sx, sy, 0, sx, sy, sr);
+  g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(.55, 'rgba(255,255,255,.9)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+  c.fillStyle = g; c.fillRect(sx - sr, sy - sr, sr * 2, sr * 2); G.fogDirty = true;
+}
+function coverage(id) {
+  const t = T[id], w = FOG.scout.c.width, d = FOG.scout.x.getImageData(0, 0, w, FOG.scout.c.height).data;
+  let hit = 0;
+  for (const [x, y] of t.samp) { const i = ((y * MS | 0) * w + (x * MS | 0)) * 4 + 3; if (d[i] > 128) hit++; }
+  return t.samp.length ? hit / t.samp.length : 0;
+}
+function setKnown(t) { if (t.state < 2) { t.state = 2; G.knownDirty = true; G.stateDirty = true; } }
+
+// ---------- state layer: rot tint + edge glow, root glow ----------
+function composeState() {
+  stateLayer = stateLayer || layer();
+  const c = stateLayer.x;
+  c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, CW * K, CH * K); c.setTransform(K, 0, 0, K, 0, 0);
+  T.forEach(t => {
+    if (t.state === 0) return;
+    const [bx, by, bw, bh] = t.bb;
+    if (t.b > 0) {
+      c.globalAlpha = .2 * t.b; c.globalCompositeOperation = 'multiply'; drawTinted(c, t, '#3d6a2a', bx, by, bw, bh);
+      c.globalAlpha = .05 * t.b; c.globalCompositeOperation = 'source-over'; drawTinted(c, t, '#6dff3a', bx, by, bw, bh);
+      c.globalAlpha = 1; c.save(); c.clip(t.path); c.lineJoin = 'round';
+      c.strokeStyle = 'rgba(90,255,50,' + (.1 + .07 * t.b) + ')'; c.lineWidth = 6 + 4 * t.b; c.stroke(t.path);
+      c.strokeStyle = 'rgba(160,255,110,' + (.25 + .12 * t.b) + ')'; c.lineWidth = 3; c.stroke(t.path); c.restore();
+    }
+    if (t.rooted) { c.globalAlpha = .10; c.globalCompositeOperation = 'screen'; drawTinted(c, t, '#c8ff9a', bx, by, bw, bh); }
+  });
+  c.globalCompositeOperation = 'source-over'; c.globalAlpha = 1;
+  G.stateDirty = false;
+}
+const tintCache = {};
+function drawTinted(c, t, col, bx, by, bw, bh) {
+  const key = t.id + col;
+  if (!tintCache[key]) { const cc = document.createElement('canvas'); cc.width = t.tint.width; cc.height = t.tint.height; const x = cc.getContext('2d'); x.drawImage(t.tint, 0, 0); x.globalCompositeOperation = 'source-in'; x.fillStyle = col; x.fillRect(0, 0, cc.width, cc.height); tintCache[key] = cc; }
+  c.drawImage(tintCache[key], bx, by, bw, bh);
+}
+
+// ---------- rules helpers ----------
+const stage = () => STAGES.filter(s => G.wandel >= s[0]).pop()[1];
+const isAccountant = () => G.wandel <= 4;
+const rootCount = () => T.filter(t => t.rooted).length;
+function addWandel(d) { G.wandel = clamp(G.wandel + d, 0, 20); }
+function setRooted(t, v) { if (t.rooted === v) return; t.rooted = v; t.rs = v ? 1 : 0; if (v) t.rootBorn = G.now; G.stateDirty = true; }
+function crossOk(a, b) {
+  const ra = regOf(T[a].reg), rb = regOf(T[b].reg);
+  if (T[b].reg === 5) return { ok: false, why: 'Deep water. You would need help from the sea.' };
+  if (ra === rb) return { ok: true };
+  const key = Math.min(ra, rb) + '-' + Math.max(ra, rb);
+  if (key === '1-2') return G.friends.gecko ? { ok: true } : { ok: false, why: '⛰ A sheer rock wall. Someone who climbs could show you the way.' };
+  if (key === '1-3' || key === '2-3') return { ok: false, closed: 'fire', why: '🔥 Fire Mountain is closed this season. (Not part of this prototype.)' };
+  return { ok: false, closed: 'tangle', why: '🌿 The tangle is closed this season. (Not part of this prototype.)' };
+}
+// the cat obeys the same hard borders, but ignores who you've befriended
+function catCan(a, b) { if (T[b].reg === 5) return false; return regOf(T[a].reg) === regOf(T[b].reg); }
+function moveCost(a, b) { const base = RULES.costMove[T[b].type] || 1; return Math.max(0, base - (T[a].rooted && T[b].rooted ? 1 : 0)) + T[b].b; }
+function defense(t) { return (t.rooted ? t.rs : 0) + (t.prot ? 1 : 0) + (friendOn(t.id) ? 1 : 0) + (G.at === t.id ? 1 : 0); }
+function friendOn(id) { return (id === G.banyan && G.friends.banyan) || (id === G.gecko && G.friends.gecko); }
+function attackFrom(t) { let a = 0, f = -1; t.nb.forEach(n => { if (T[n].b > a) { a = T[n].b; f = n; } }); return f; }
+function attackOn(t) { let a = 0; t.nb.forEach(n => { if (T[n].b > a) a = T[n].b; }); if (rootCount() >= RULES.rootThresh2) a = Math.max(0, a - 1); return a; }
+function canGrowTo(t) {
+  if (t.rooted || t.reg === 5 || t.b >= 2 || t.state === 0) return false;
+  for (const n of t.nb) if (T[n].rooted && crossOk(n, t.id).ok) return true;
+  return false;
+}
+function distToStart() {
+  const src = G.friends.banyan ? G.banyan : G.start, d = new Array(T.length).fill(1e9), q = [src]; d[src] = 0;
+  while (q.length) { const a = q.shift(); T[a].nb.forEach(n => { if (d[n] > d[a] + 1) { d[n] = d[a] + 1; q.push(n); } }); }
+  return d;
+}
+function newDeck() { G.deck = []; for (let k = 0; k < 3; k++) G.deck.push(...OMEN_TYPES); for (let i = G.deck.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; [G.deck[i], G.deck[j]] = [G.deck[j], G.deck[i]]; } }
+const omenType = t => t.type === 'tangle' ? 'jungle' : t.type === 'lava' ? 'slope' : t.type;
+// Bad Omen = hard filter on land TYPES you have already seen somewhere; it then strikes any tile
+// of that type next to rot — under the clouds too. Every rot network grows one spearhead.
+function seenTypes() { const s = new Set(); T.forEach(t => { if (t.state > 0 && t.reg !== 5) s.add(omenType(t)); }); return s; }
+function networks() {      // connected rot areas (land) with their nests and each nest's share
+  const comp = new Array(T.length).fill(-1), nets = [];
+  T.forEach(t => {
+    if (t.b <= 0 || t.reg === 5 || comp[t.id] >= 0) return;
+    const ids = [], q = [t.id]; comp[t.id] = nets.length;
+    while (q.length) { const a = q.shift(); ids.push(a); T[a].nb.forEach(n => { if (comp[n] < 0 && T[n].b > 0 && T[n].reg !== 5) { comp[n] = nets.length; q.push(n); } }); }
+    nets.push({ ids, nests: ids.filter(id => T[id].source === 'nest') });
+  });
+  nets.forEach(net => {     // each tile belongs to its nearest nest inside the network
+    net.share = {}; if (!net.nests.length) return;
+    const own = {}, q = []; net.nests.forEach(n => { own[n] = n; q.push(n); net.share[n] = []; });
+    const inNet = new Set(net.ids);
+    while (q.length) { const a = q.shift(); net.share[own[a]].push(a); T[a].nb.forEach(n => { if (inNet.has(n) && own[n] === undefined) { own[n] = own[a]; q.push(n); } }); }
+  });
+  return { comp, nets };
+}
+function nestPower(net, n) {   // power = tiles in its own share + 1/3 of every merged partner's share
+  let p = net.share[n].length;
+  net.nests.forEach(m => { if (m !== n) p += Math.floor(net.share[m].length * RULES.merge); });
+  return p;
+}
+function planFlood(keepOmen) {
+  const d = distToStart();
+  const cand = T.filter(t => !t.source && t.reg !== 5 && t.b < RULES.maxRot && [...t.nb].some(n => T[n].b > 0 && T[n].reg !== 5));
+  const seen = seenTypes(), eligible = new Set(cand.map(omenType).filter(o => seen.has(o)));
+  if (!keepOmen) G.omen = null;
+  G.tinfo = {};
+  if (!G.omen && eligible.size) {
+    if (![...G.deck].some(o => eligible.has(o))) newDeck();
+    for (let i = G.deck.length - 1; i >= 0; i--) if (eligible.has(G.deck[i])) { G.omen = G.deck.splice(i, 1)[0]; break; }
+  }
+  G.targets = [];
+  if (G.omen) {
+    const { comp, nets } = networks();
+    nets.forEach((net, ci) => {   // one spearhead per network, the closest matching tile
+      const c = cand.filter(t => omenType(t) === G.omen && !G.targets.includes(t.id) && [...t.nb].some(n => comp[n] === ci)).sort((a, b) => d[a.id] - d[b.id])[0];
+      if (c) G.targets.push(c.id);
+    });
+    G.targets.sort((a, b) => d[a] - d[b]);
+    if (rootCount() >= RULES.rootThresh1) G.targets = G.targets.slice(0, 2);
+  }
+  G.targets.forEach(id => G.tinfo[id] = { from: attackFrom(T[id]), overflow: false });
+  // overflow: each network with a fully rotten tile spills once into a neighbour, omen or not
+  const { nets: onets } = networks();
+  onets.forEach(net => {
+    let best = null;
+    net.ids.forEach(id => {
+      const t = T[id]; if (t.b < RULES.maxRot || t.source) return;
+      [...t.nb].forEach(x => { if (T[x].b < RULES.maxRot && !T[x].source && T[x].reg !== 5 && !G.targets.includes(x) && (!best || d[x] < d[best.to])) best = { to: x, from: id }; });
+    });
+    if (best) { G.targets.push(best.to); G.tinfo[best.to] = { from: best.from, overflow: true }; }
+  });
+  mergeWatch();
+  G.stateDirty = true; updateHUD();
+}
+// the briefcase warns when two rot networks are one tile apart, and again when they merge
+function mergeWatch() {
+  const { comp, nets } = networks();
+  if (nets.some(n => n.nests.length > 1)) { say1('merged', 'briefcase', 'Merger completed. Two nests, one network. Each keeps its own strength and takes a third of the other\'s on top. Synergies — theirs, not ours.'); return; }
+  const near = T.some(t => { if (t.b > 0 || t.reg === 5) return false; const cs = new Set([...t.nb].map(n => comp[n]).filter(c => c >= 0 && nets[c].nests.length)); return cs.size > 1; });
+  if (near) say1('mergeWarn', 'briefcase', 'Audit note: two rot networks are one tile apart. If they connect, each gains a third of the other\'s power. Compound interest — the bad kind. Hold that tile.');
+}
+// flood step: every nest strengthens its own share, one +1 per power point
+function nestPhase() {
+  const { nets } = networks(), d = distToStart(), hits = [];
+  nets.forEach(net => net.nests.forEach(n => {
+    let p = nestPower(net, n);
+    const pool = net.share[n].filter(id => T[id].b < RULES.maxRot).sort((a, b) => T[a].b - T[b].b || d[a] - d[b]);
+    for (const id of pool) { if (p <= 0) break; if (hits.includes(id)) continue; T[id].b++; hits.push(id); p--; }
+  }));
+  hits.forEach(id => { if (T[id].state > 0) addFloat(...tileXY(id), '+1 rot', '#9dff7a'); if (T[id].rooted) { T[id].rs--; if (T[id].rs <= 0) setRooted(T[id], false); } });
+  if (hits.some(id => T[id].state > 0)) say1('nestGrow', 'tortoise', 'Nests feed their own rot every flood: one point per tile they own. More nests hide under the clouds, and they don\'t wait for you.');
+  G.stateDirty = true;
+  return hits.length;
+}
+// flood step: the banyan works healthy rooted tiles (max = its level) and strengthens roots by itself
+function banyanPhase() {
+  if (!G.friends.banyan) return 0;
+  const healthy = T.filter(t => t.rooted && t.b === 0).length, prod = Math.min(G.blevel, healthy), d = distToStart();
+  const pool = T.filter(t => t.rooted && t.rs < RULES.maxRoot).sort((a, b) => {
+    const fa = [...a.nb].some(n => T[n].b > 0) ? 0 : 1, fb = [...b.nb].some(n => T[n].b > 0) ? 0 : 1;
+    return fa - fb || a.rs - b.rs || d[a.id] - d[b.id];
+  }).slice(0, prod);
+  pool.forEach(t => { t.rs++; addFloat(...tileXY(t.id), '🌿 root ' + t.rs, '#c8ffb0'); });
+  if (pool.length) say1('rootGrow', 'tortoise', 'The banyan strengthened a root by itself. It works one healthy rooted tile per level. Rot on a rooted tile stops it working there.');
+  G.stateDirty = true;
+  return pool.length;
+}
+
+// ---------- actions ----------
+function spend(n) { if (G.gezeit < n) { say('tortoise', 'Not enough tide left, darling. End the ebb.'); return false; } G.gezeit -= n; return true; }
+function act(kind, id) {
+  if (G.phase !== 'ebb' || G.over) return;
+  const t = T[id];
+  if (kind === 'move') {
+    const c = crossOk(G.at, id); if (!c.ok) { blockedSay(c); toast(c.why); return; }
+    const cost = moveCost(G.at, id); if (!spend(cost)) return;
+    G.at = id; G.moves++; const [x, y] = tileXY(id); Object.assign(G.group, { fx: G.group.x, fy: G.group.y, tx: x, ty: y, t: 0 });
+    const firstVisit = t.state < 2; setKnown(t);
+    if (firstVisit && t.content && t.content.kind === 'memory' && !G.memories.includes('invoice')) { G.memories.push('invoice'); setTimeout(() => { showCard('A memory', 'A sodden receipt in the flotsam. <i>“Invoice: one (1) island, paid in full.”</i> Your handwriting.'); say1('memory', 'briefcase', 'I remember that invoice. I was there. I was the one holding it.'); }, 700); }
+    if (firstVisit && t.content && t.content.kind === 'banyan') say1('banyanVisit', 'tortoise', 'Here it is. Older than both of us. Sit with it until the tide turns — end the ebb right here. I\'ll translate. First one\'s free.');
+    if (firstVisit && t.content && t.content.kind === 'gecko') say1('geckoVisit', 'tortoise', 'A gecko. It climbs the cliffs to the west. It wants 3 breadfruit — and roots under its feet. Picky little thing.');
+    if (firstVisit && t.b > 0 && !t.source) say1('rotVisit', 'tortoise', 'You\'re standing in rot. Charming. Cleanse it — 2 tide — or at least stand here at flood: you count as +1 defence.');
+    if (G.moves === 1) say1('firstMove', 'tortoise', 'Look at you, walking. Top left is your tide 🌊. Every step costs some. When it\'s gone, the sea comes back whether you\'re done or not.');
+    if (G.moves === 2) say1('omen', 'tortoise', 'Top centre: the Bad Omen. The rot creeps into that kind of land, next to rot — even under the clouds. But it only names land you\'ve already seen. Knowledge is a liability. Ask your briefcase.');
+    if (t.b > 0) say1('rotMove', 'tortoise', 'Rot is sticky. Every rot level costs +1 tide to walk into. Roots shave off 1.');
+    if (G.moves === 2) say1('omenCase', 'briefcase', 'Correct. Everything you discover goes on the balance sheet. Including the risks.');
+    scout(id);
+    addFloat(x, y - 26, cost ? '−' + cost + ' 🌊' : 'free', '#bff3ec');
+  }
+  if (kind === 'harvest') {
+    if (!spend(1)) return;
+    const y = RULES.harvestYield + (isAccountant() ? RULES.accountantBonus : 0);
+    G.res[t.content.res] += y; t.exh = RULES.exhaustTides; addWandel(-1);
+    addFloat(...tileXY(id), '+' + y + ' ' + t.content.icon, '#ffe08a');
+    say1('harvest', 'briefcase', '+1 accountant bonus. Efficiency! Booked and filed.');
+    say1('harvest2', 'tortoise', 'Every time you count things, you drift further from us. Wandel −1. The island noticed.');
+  }
+  if (kind === 'protect') {
+    if (!spend(1)) return; t.prot = true; addWandel(1); addFloat(...tileXY(id), 'protected', '#c8ffb0');
+    say1('protect', 'tortoise', 'Protected: +1 defence, and fruit tiles give +1 every tide. You\'re learning. Slowly.');
+  }
+  if (kind === 'cleanse') {
+    if (!spend(2)) return; t.b--; addWandel(1); addFloat(...tileXY(id), '−1 rot', '#c8ffb0');
+    say1('cleanse', 'tortoise', 'Scrubbing rot with your bare hands. Disgusting. Effective.');
+    if (t.b === 0 && t.source === 'nest') { t.source = null; t.name = 'Cleansed shore'; showCard('The nest is gone', 'You scrub the last of the green ooze from the rocks. The shore breathes again.'); say1('nestGone', 'tortoise', 'You cleaned it. Look at you, being useful. The yacht will send more, of course.'); }
+  }
+  if (kind === 'gecko') {
+    if (!spend(1)) return; G.res.fruit -= 3; G.friends.gecko = true; G.gmax++; addWandel(2);
+    showCard('The gecko', 'It licks the fruit flies off the breadfruit, blinks at you twice, and scurries up the rock wall to the west. <b>The cliffs are open.</b>');
+    say1('geckoFriend', 'tortoise', 'The cliffs are open. Try not to fall off them.');
+  }
+  if (kind === 'nourish') {
+    if (id !== G.at || !canGrowTo(t)) return;
+    if (G.res.green < RULES.nourishGreen) { toast('You need ' + RULES.nourishGreen + ' 💚.'); return; }
+    if (!spend(RULES.nourishCost)) return; G.res.green -= RULES.nourishGreen; setRooted(t, true); addFloat(...tileXY(id), '🌱 root', '#c8ffb0');
+    say1('nourish', 'tortoise', 'Rooting is heavy work — four tide and two hearts. You plant; the banyan does the strengthening, every flood, on its own.');
+    say1('nourishCase', 'briefcase', 'Capital expenditure. Green blood into roots. I approve, reluctantly.');
+  }
+  if (kind === 'offer') {
+    if (id !== G.banyan || G.at !== id || !G.friends.banyan || G.wandel < RULES.offerWandel || G.blevel >= RULES.banyanMax) return;
+    if (!spend(RULES.offerCost)) return;
+    addWandel(-RULES.offerWandel); G.blevel++; addFloat(...tileXY(id), 'Banyan ' + G.blevel, '#ffe08a');
+    say1('offer', 'tortoise', 'You gave it part of yourself. The tree remembers. It will work one more tile for you each flood.');
+    say1('offerCase', 'briefcase', 'Three units of Wandel, written off. I feel more like myself already. So do you, I suspect.');
+  }
+  if (kind === 'inventory') {
+    if (!spend(1)) return; addWandel(-1);
+    const d = new Map([[G.at, 0]]), q = [G.at]; let n = 0;
+    while (q.length) { const a = q.shift(); if (d.get(a) >= 2) continue; T[a].nb.forEach(b => { if (!d.has(b)) { d.set(b, d.get(a) + 1); q.push(b); if (T[b].state === 1) { setKnown(T[b]); n++; } } }); }
+    toast(n ? 'Inventory: ' + n + ' tiles itemised.' : 'Nothing new to itemise nearby.');
+    say1('inventory', 'briefcase', 'Inventory complete. Everything the cat sniffed is now an asset. You\'re welcome.');
+  }
+  G.stateDirty = true; planFlood(true); renderPanel();
+}
+function blockedSay(c) {
+  if (c.closed === 'fire') say1('fire', 'tortoise', 'Fire Mountain? Not this season, sweetheart. Come back when you\'ve grown more than a tie.');
+  else if (c.closed === 'tangle') say1('tangle', 'tortoise', 'The tangle doesn\'t want you. Not this season. Ask me again in a few chapters.');
+  else if (c.why.startsWith('⛰')) say1('cliff', 'tortoise', 'A rock wall. You don\'t climb. Someone around here does — look for small feet in the palm grove.');
+}
+
+// ---------- cat scouting: walks the tile with a small sight radius ----------
+function scout(from) { G.catQ.push(from); }
+function chain(pts, sx, sy, maxLen, maxPts) {
+  const rest = pts.slice(), out = []; let x = sx, y = sy, len = 0;
+  while (rest.length && out.length < maxPts) {
+    let bi = 0, bd = 1e9; rest.forEach((p, i) => { const d = Math.hypot(p[0] - x, p[1] - y); if (d < bd) { bd = d; bi = i; } });
+    const p = rest.splice(bi, 1)[0]; if (out.length && len + bd > maxLen) break;
+    len += out.length ? bd : 0; out.push(p); x = p[0]; y = p[1];
+  }
+  return out;
+}
+function startCat() {
+  while (G.catQ.length) {
+    const from = G.catQ.shift(), hidden = [...T[from].nb].filter(x => T[x].state === 0);
+    if (!hidden.length) continue;
+    const target = hidden[(Math.random() * hidden.length) | 0], gp = G.group, sx = gp.tx + 9, sy = gp.ty + 2;
+    const enter = catCan(from, target);
+    let path;
+    if (enter) {
+      const s = T[target].samp, pts = []; for (let k = 0; k < 9 && s.length; k++) pts.push(s[(Math.random() * s.length) | 0]);
+      path = chain(pts, sx, sy, 1e9, 7);
+    } else {
+      const bp = (BP[from + '_' + target] || []).filter((p, i) => i % 3 === 0);
+      if (!bp.length) continue;
+      path = chain(bp, sx, sy, 170, 40).filter((p, i, a) => i % 4 === 0 || i === a.length - 1);
+    }
+    if (!path.length) continue;
+    G.cat = { x: sx, y: sy, path, i: 0, target, from, seam: !enter, back: false, check: 0, done: false };
+    return;
+  }
+}
+function updateCat(dt) {
+  if (!G.cat) { if (G.catQ.length) startCat(); return; }
+  const c = G.cat, gp = G.group;
+  const [tx, ty] = c.back ? [gp.x + 9, gp.y + 2] : c.path[c.i];
+  const dx = tx - c.x, dy = ty - c.y, d = Math.hypot(dx, dy), step = RULES.catSpeed * (c.back ? 1.6 : 1) * dt;
+  c.dir = dx >= 0 ? 1 : -1;
+  if (d <= step) { c.x = tx; c.y = ty; if (c.back) { G.cat = null; return; } c.i++; if (c.i >= c.path.length) finishScan(c); }
+  else { c.x += dx / d * step; c.y += dy / d * step; }
+  if (!c.back) {
+    revealAt(c.x, c.y, c.seam ? RULES.catRadius * .9 : RULES.catRadius);
+    c.check += dt;
+    if (c.check > .3 && !c.done) { c.check = 0; if (coverage(c.target) >= RULES.scoutCover) { c.done = true; markScouted(c.target); } }
+  }
+}
+function finishScan(c) {
+  if (!c.seam && !c.done && (c.ext || 0) < 3 && coverage(c.target) < RULES.scoutCover) {   // big tile: keep sniffing
+    const sm = T[c.target].samp, pts = []; for (let k = 0; k < 6 && sm.length; k++) pts.push(sm[(Math.random() * sm.length) | 0]);
+    c.path = c.path.concat(chain(pts, c.x, c.y, 1e9, 4)); c.ext = (c.ext || 0) + 1; return;
+  }
+  c.back = true;
+  if (!c.done && coverage(c.target) >= RULES.scoutCover) { c.done = true; markScouted(c.target); }
+  if (c.seam && !c.done) say1('seam', 'tortoise', 'Even the cat won\'t cross that border. She only peeks over the edge. Hard borders stop everyone — mostly.');
+}
+function markScouted(id) {
+  const t = T[id]; if (t.state > 0) return;
+  t.state = 1; G.stateDirty = true; SFXmeow();
+  const [x, y] = tileXY(id); addFloat(x, y - 10, 'scouted', '#fff6e3');
+  say1('firstScout', 'tortoise', 'The cat found something. She\'ll want credit. Scouted tiles show a hint — walk in to see them properly.');
+  if (id === G.banyan) say1('banyanSeen', 'tortoise', 'See that sapling with the sparkle? The banyan. It wishes for company: end an ebb on its tile.');
+  if (id === G.nest) { say1('nest', 'tortoise', 'That green ooze is a nest. The yacht leaks into everything. Rot only spreads to tiles next to rot.'); say1('nestCase', 'briefcase', 'Contingent liability identified. Recommend provisioning.'); }
+  if (id === G.gecko) say1('geckoSeen', 'tortoise', 'Small feet in the palm grove. Someone around here climbs.');
+  if (G.phase === 'ebb') planFlood(true); else updateHUD();
+}
+
+// ---------- ebb end, flood, growth ----------
+async function endEbb() {
+  if (G.phase !== 'ebb' || G.over) return;
+  G.phase = 'flood'; G.sel = -1; renderPanel(); updateHUD();
+  if (G.at === G.banyan && !G.friends.banyan) {
+    G.friends.banyan = true; setRooted(T[G.banyan], true); G.blevel = 1; G.gmax++; addWandel(2);
+    await showCardWait('The banyan', 'You sit with the sapling while the sea comes back. The tortoise translates, slowly. <i>“It says you smell of paper. It says it can fix that.”</i><br><br><b>First roots.</b> Your tide grows to ' + G.gmax + '. The banyan is level 1: each flood it strengthens one of your roots by itself.');
+    say1('banyanFriend', 'briefcase', 'Roots are non-depreciating. I checked.');
+  }
+  const ov = G.targets.filter(id => G.tinfo[id] && G.tinfo[id].overflow).length, om = G.targets.length - ov;
+  await showCardWait('Low tide ends · Tide ' + G.tide, 'Unused tide: ' + G.gezeit + ' 🌊<br>' +
+    (G.omen ? 'Bad Omen <b>' + G.omen + '</b>: the rot strikes ' + om + ' tile' + (om === 1 ? '' : 's') + '.' : 'No Bad Omen: the rot finds nothing it fancies.') +
+    (ov ? '<br>Overflow: ' + ov + ' tile' + (ov === 1 ? '' : 's') + ' hit by rot spilling from a rot-3 tile.' : ''), 'Let the tide come in');
+  banner('High tide');
+  await sleep(900);
+  let lost = 0, held = 0;
+  if (!G.targets.length) say1('calm', 'tortoise', 'A calm tide. The rot found nothing it fancies. Enjoy it; it never lasts.');
+  for (const id of G.targets.slice()) {
+    const t = T[id]; if (G.over) break;
+    G.flash = id; await sleep(350);
+    const a = attackOn(t), d = defense(t), [x, y] = tileXY(id);
+    if (G.tinfo[id] && G.tinfo[id].overflow) say1('overflow', 'tortoise', 'Overflow. Once a rot network has a tile at rot 3, it spills over once every flood — omen or not.');
+    if (a > d) {
+      lost++; t.b = Math.min(3, t.b + 1);
+      if (t.rooted) { t.rs--; if (t.rs <= 0) { setRooted(t, false); addFloat(x, y - 16, 'root lost', '#ffb0a0'); } else addFloat(x, y - 16, 'root −1', '#ffb0a0'); }
+      addFloat(x, y, 'rot ' + a + ' vs ' + d + ' · +1 rot', '#ff9a8a');
+      if (t.b >= 2 && friendOn(id) && id !== G.banyan) { G.friends.gecko = false; G.gmax--; addFloat(x, y - 30, 'the gecko flees', '#ffb0a0'); }
+      if (id === G.banyan && t.b >= 2) { G.over = true; }
+    } else {
+      held++; addFloat(x, y, 'rot ' + a + ' vs ' + d + ' · held', '#c8ffb0');
+      if (d >= a + 2) { const src = [...t.nb].filter(n => T[n].b > 0 && !T[n].source).sort((p, q) => T[q].b - T[p].b)[0]; if (src !== undefined) { T[src].b--; addFloat(...tileXY(src), 'pushed back', '#c8ffb0'); } }
+    }
+    G.stateDirty = true; await sleep(900);
+  }
+  G.flash = -1;
+  if (lost) say1('firstLoss', 'tortoise', 'And that\'s how rot works. Attack is the worst rot next door; defence is roots, protection, a friend and you. It doesn\'t negotiate. Unlike you, presumably.');
+  else if (held) say1('firstHold', 'tortoise', 'Held. Don\'t get used to it.');
+  if (G.over) { say('tortoise', 'Well. That was the banyan.'); await showCardWait('The island falls', 'The rot has reached the banyan. Everything goes quiet.<br><br><i>The tortoise yawns. “Again, then. You were getting the hang of it.”</i>', 'Start over'); location.reload(); return; }
+  // the rot feeds its networks, then the banyan works its roots
+  await sleep(300);
+  const nh = nestPhase(); if (nh) { banner('The nests feed'); await sleep(1300); }
+  if (G.friends.banyan) { const bh = banyanPhase(); if (bh) { banner('The banyan works its roots'); await sleep(1300); } }
+  if (T[G.banyan].b >= 2 && G.friends.banyan) { G.over = true; say('tortoise', 'Well. That was the banyan.'); await showCardWait('The island falls', 'The rot has reached the banyan. Everything goes quiet.<br><br><i>The tortoise yawns. “Again, then. You were getting the hang of it.”</i>', 'Start over'); location.reload(); return; }
+  T.forEach(t => { if (t.exh > 0) t.exh--; if (t.prot && t.content && t.content.kind === 'res' && t.b < 2) G.res[t.content.res] += 1; });
+  G.res.green += RULES.greenPerTide;
+  nextEbb();
+}
+function nextEbb() {
+  G.tide++; G.gezeit = G.gmax; G.phase = 'ebb';
+  planFlood(); banner('Low tide · Tide ' + G.tide); updateHUD(); renderPanel();
+}
+
+// ---------- story: tortoise + briefcase speech bubbles ----------
+const STORY_KEY = 'robinson_map_story_v3';
+let storySeen = {};
+try { storySeen = JSON.parse(localStorage.getItem(STORY_KEY) || '{}'); } catch (e) { storySeen = {}; }
+function say(who, text) {
+  const win = who === 'tortoise' ? $('chatT') : $('chatB'), box = win.querySelector('.lines');
+  const ln = document.createElement('div'); ln.className = 'ln'; ln.textContent = text; box.appendChild(ln);
+  win.style.display = 'block';
+  const lines = [...box.querySelectorAll('.ln')];
+  lines.forEach((l, i) => { const age = lines.length - 1 - i; l.style.opacity = age === 0 ? 1 : age === 1 ? .55 : age === 2 ? .35 : .2; });
+  box.scrollTop = box.scrollHeight;
+  G.talk[who] = G.now + 2.5;
+}
+function say1(key, who, text) {
+  if (storySeen[key]) return; storySeen[key] = 1;
+  try { localStorage.setItem(STORY_KEY, JSON.stringify(storySeen)); } catch (e) {}
+  say(who, text);
+}
+function storyTick() {
+  const st = stage();
+  if (st !== G.lastStage) {
+    const lines = { Castaway: 'Reclassification: Accountant → Castaway. I object, formally.', Synthesis: 'Your handwriting is growing leaves. I cannot file this.', Islander: 'You haven\'t opened me in days. Should I be worried?', Surrender: '…I suppose I\'m a nest for crabs now. Fine.', Accountant: 'Welcome back to Accountant. I knew you\'d come round.' };
+    if (lines[st]) say1('stage_' + st, 'briefcase', lines[st]);
+    G.lastStage = st;
+  }
+  if (G.phase === 'ebb' && G.gezeit <= 1 && G.tide >= 1 && G.moves > 0) say1('lowTide', 'tortoise', 'Nearly out of tide. End the ebb before the sea ends it for you.');
+}
+
+// ---------- UI ----------
+function goalText() {
+  if (!G.friends.banyan) return T[G.banyan].state > 0 ? '🎯 Wish: end an ebb on the banyan ✨' : '🎯 Explore — follow the cat';
+  if (!G.friends.gecko) return T[G.gecko].state > 0 ? '🎯 Gecko: 3 🍞 + roots on its tile' : '🎯 Grow roots · find who climbs';
+  return '🎯 The cliffs are open';
+}
+function updateHUD() {
+  $('hG').textContent = G.gezeit + '/' + G.gmax; $('hT').textContent = G.tide;
+  $('hW').textContent = G.wandel; $('hS').textContent = stage(); $('hWb').style.width = (G.wandel * 5) + '%';
+  const rc = rootCount(), next = rc < RULES.rootThresh1 ? RULES.rootThresh1 : rc < RULES.rootThresh2 ? RULES.rootThresh2 : null;
+  $('hR').textContent = '🌱 ' + rc + (next ? '/' + next : '') + (G.friends.banyan ? ' · 🌳 Lv ' + G.blevel : '') + ' · 🍞 ' + G.res.fruit + ' · 🥥 ' + G.res.coco + ' · 💚 ' + G.res.green;
+  $('hGoal').textContent = goalText();
+  const ov = G.targets.filter(id => G.tinfo[id] && G.tinfo[id].overflow).length, om = G.targets.length - ov;
+  $('omen').innerHTML = (G.omen ? '☠ Bad Omen: <b>' + G.omen + '</b> · ' + om + ' spearhead' + (om === 1 ? '' : 's') : '☠ No Bad Omen · the rot finds no known land to creep into')
+      + (ov ? ' · <b>+' + ov + ' overflow</b>' : '');
+  $('bEnd').style.display = G.phase === 'ebb' ? 'block' : 'none';
+  $('bInv').style.display = G.phase === 'ebb' && G.wandel <= 9 ? 'block' : 'none';
+  storyTick();
+}
+function renderPanel() {
+  const p = $('panel');
+  if (G.sel < 0 || G.phase !== 'ebb') { p.style.display = 'none'; return; }
+  const t = T[G.sel], here = G.sel === G.at, adj = T[G.at].nb.has(G.sel);
+  let title = t.state === 0 ? 'Unknown' : t.name, lines = [], btns = [];
+  if (t.state === 1) lines.push('The cat smelled ' + (t.content ? { banyan: 'something green and very old', gecko: 'something small with feet', res: 'food', memory: 'paper and salt water', start: 'crabs' }[t.content.kind] : (t.b ? 'rot' : 'nothing special')) + '.');
+  if (t.state === 2) {
+    lines.push(cap(t.type) + (omenType(t) !== t.type ? ' (counts as ' + omenType(t) + ')' : '') + ' · move ' + (RULES.costMove[t.type] >= 99 ? '—' : RULES.costMove[t.type]) + ' 🌊');
+    if (t.content) {
+      const c = t.content;
+      if (c.kind === 'banyan') lines.push(G.friends.banyan ? '🌿 The banyan. Your roots start here.' : '🌿 A banyan sapling. <b>Wish: end an ebb on this tile.</b>');
+      if (c.kind === 'gecko') lines.push(G.friends.gecko ? '🦎 The gecko is your friend. The cliffs are open.' : '🦎 A gecko. Wish: 3 🍞 and roots on its tile.');
+      if (c.kind === 'res') lines.push(c.icon + ' ' + (c.res === 'fruit' ? 'Breadfruit' : 'Coconuts') + (t.prot ? ' · protected, +1 each tide' : t.exh ? ' · exhausted for ' + t.exh + ' tides' : ''));
+      if (c.kind === 'memory') lines.push('✦ Flotsam from the yacht.');
+      if (c.kind === 'start') lines.push('🐢 The tortoise lives here.');
+    }
+  } else if (t.state === 1) lines.push(cap(t.type) + (omenType(t) !== t.type ? ' (counts as ' + omenType(t) + ')' : ''));
+  if (t.b > 0 && t.state > 0) lines.push('☠ Rot ' + t.b + '/3' + (t.source ? ' · a source' : '') + (t.b >= 3 && !t.source ? ' · its network overflows every flood' : ''));
+  if (t.state > 0) lines.push('🛡 Defence ' + defense(t) + (t.rooted ? ' · rooted' : '') + (t.prot ? ' · protected' : ''));
+  if (t.rooted) lines.push('🌿 Root strength ' + t.rs + '/' + RULES.maxRoot + (t.b ? ' · rotten: the banyan can\'t work it' : ''));
+  if (t.source === 'nest' && t.state > 0) { const { nets } = networks(), net = nets.find(n => n.nests.includes(t.id)); if (net) lines.push('☠ Nest power ' + nestPower(net, t.id) + ' · strengthens its rot every flood'); }
+  if (t.id === G.banyan && G.friends.banyan) lines.push('🌳 Banyan level ' + G.blevel + ' · works ' + Math.min(G.blevel, T.filter(x => x.rooted && !x.b).length) + ' healthy root' + (G.blevel === 1 ? '' : 's') + ' per flood');
+  if (G.targets.includes(t.id)) lines.push('<span class="warn">⚠ ' + (G.tinfo[t.id] && G.tinfo[t.id].overflow ? 'Overflow from a rot-3 tile' : 'Bad Omen: ' + G.omen) + ' — rot ' + attackOn(t) + ' vs defence ' + defense(t) + ' next flood.</span>');
+  if (G.targets.includes(t.id)) say1('defence', 'tortoise', 'Defence is simple: roots +1, protected +1, a friend living there +1, you standing there +1. Attack is the worst rot next door.');
+  const c = crossOk(G.at, t.id);
+  if (!c.ok && c.closed) { lines.push('<span class="warn">' + c.why + '</span>'); blockedSay(c); }
+  if (adj) {
+    if (c.ok) btns.push(['move', 'Go here · ' + (t.state === 0 ? '?' : moveCost(G.at, t.id)) + ' 🌊']);
+    else if (!c.closed) lines.push('<span class="warn">' + c.why + '</span>');
+  }
+  if (here) {
+    lines.unshift('<i>You are here.</i>');
+    if (t.content && t.content.kind === 'res' && !t.prot && !t.exh) btns.push(['harvest', 'Harvest · 1 🌊 · +' + (RULES.harvestYield + (isAccountant() ? RULES.accountantBonus : 0)) + ' ' + t.content.icon + ' · wandel −1']);
+    if (!t.prot && t.reg !== 5) btns.push(['protect', 'Protect · 1 🌊 · wandel +1']);
+    if (t.b > 0 && t.source !== 'wreck') btns.push(['cleanse', 'Cleanse · 2 🌊 · −1 rot · wandel +1']);
+    if (t.content && t.content.kind === 'gecko' && !G.friends.gecko) {
+      if (t.rooted && G.res.fruit >= 3) btns.push(['gecko', 'Befriend · 1 🌊 + 3 🍞 · wandel +2']);
+      else lines.push('<span class="warn">Needs ' + (t.rooted ? '' : 'roots here' + (G.res.fruit < 3 ? ' and ' : '')) + (G.res.fruit < 3 ? '3 🍞' : '') + '.</span>');
+    }
+  }
+  if (here && G.friends.banyan && canGrowTo(t)) btns.push(['nourish', 'Plant a root · ' + RULES.nourishCost + ' 🌊 + ' + RULES.nourishGreen + ' 💚']);
+  if (here && t.id === G.banyan && G.friends.banyan && G.blevel < RULES.banyanMax) {
+    if (G.wandel >= RULES.offerWandel) btns.push(['offer', 'Offer ' + RULES.offerWandel + ' Wandel · ' + RULES.offerCost + ' 🌊 → banyan level ' + (G.blevel + 1)]);
+    else lines.push('<span class="warn">Offering needs ' + RULES.offerWandel + ' Wandel.</span>');
+  }
+  p.innerHTML = '<h3>' + title + '</h3>' + lines.map(l => '<p>' + l + '</p>').join('') + btns.map(b => '<button data-a="' + b[0] + '">' + b[1] + '</button>').join('');
+  p.style.display = 'block';
+}
+const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+$('panel').addEventListener('click', e => { const b = e.target.closest('button'); if (b) act(b.dataset.a, G.sel); });
+$('bEnd').onclick = endEbb;
+$('bInv').onclick = () => act('inventory', G.at);
+$('bStory').onclick = () => { try { localStorage.removeItem(STORY_KEY); } catch (e) {} location.reload(); };
+function toast(msg) { const el = $('toast'); el.innerHTML = msg; el.style.opacity = 1; clearTimeout(toast.t); toast.t = setTimeout(() => el.style.opacity = 0, 3600); }
+function banner(txt) { const el = $('banner'); el.textContent = txt; el.style.opacity = 1; clearTimeout(banner.t); banner.t = setTimeout(() => el.style.opacity = 0, 1500); }
+let cardResolve = null;
+function showCard(title, html, btn) { $('cardT').innerHTML = title; $('cardB').innerHTML = html; $('cardBtn').textContent = btn || 'OK'; $('card').style.display = 'flex'; }
+function showCardWait(title, html, btn) { showCard(title, html, btn); return new Promise(r => cardResolve = r); }
+$('cardBtn').onclick = () => { $('card').style.display = 'none'; if (cardResolve) { const r = cardResolve; cardResolve = null; r(); } };
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+function addFloat(x, y, txt, col) { G.floats.push({ x, y, txt, col, t: 0 }); }
+
+// ---------- input: tap a tile ----------
+cv.addEventListener('pointerdown', e => {
+  if ($('card').style.display === 'flex') return;
+  const r = cv.getBoundingClientRect(), lx = (e.clientX - r.left) / r.width * CW, ly = (e.clientY - r.top) / r.height * CH;
+  const d = pick.getContext('2d').getImageData(lx | 0, ly | 0, 1, 1).data;
+  const id = d[0] - 1; if (id < 0 || id >= T.length || d[1] || d[2]) { G.sel = -1; renderPanel(); return; }
+  G.sel = id; renderPanel();
+});
+
+// ---------- organic roots ----------
+const rootGeo = {};
+function rootLine(rng, ax, ay, bx, by, amp, n) {
+  const pts = [], dx = bx - ax, dy = by - ay, L = Math.hypot(dx, dy) || 1, nx = -dy / L, ny = dx / L;
+  const p1 = rng() * 6, p2 = rng() * 6, f1 = 1.2 + rng() * 1.4, f2 = 3 + rng() * 3;
+  for (let i = 0; i <= n; i++) {
+    const u = i / n, env = Math.sin(u * Math.PI), o = (Math.sin(u * f1 * Math.PI + p1) * amp + Math.sin(u * f2 * Math.PI + p2) * amp * .35) * env + (rng() - .5) * 1.6 * env;
+    pts.push([ax + dx * u + nx * o, ay + dy * u + ny * o]);
+  }
+  return pts;
+}
+function makeBranches(rng, pts, count, len) {
+  const out = [];
+  for (let k = 0; k < count; k++) {
+    const i = 2 + ((rng() * (pts.length - 4)) | 0), [x, y] = pts[i], [px, py] = pts[i - 1];
+    const ang = Math.atan2(y - py, x - px) + (rng() < .5 ? -1 : 1) * (.6 + rng() * .6), l = len * (.6 + rng() * .6);
+    out.push({ at: i / (pts.length - 1), pts: rootLine(rng, x, y, x + Math.cos(ang) * l, y + Math.sin(ang) * l, 2.2, 6) });
+  }
+  return out;
+}
+function rootsFor(key, seed, build) { return rootGeo[key] || (rootGeo[key] = build(mulberry(seed))); }
+function strokeTaper(c, pts, w0, w1, prog, col) {
+  const n = pts.length - 1, m = Math.max(1, Math.floor(n * prog));
+  c.strokeStyle = col;
+  for (let i = 0; i < m; i++) { c.lineWidth = lerp(w0, w1, i / n); c.beginPath(); c.moveTo(pts[i][0], pts[i][1]); c.lineTo(pts[i + 1][0], pts[i + 1][1]); c.stroke(); }
+}
+function drawRoot(c, pts, w0, w1, prog, t) {
+  strokeTaper(c, pts, w0 + 2.2, w1 + 1.6, prog, 'rgba(48,30,14,.8)');
+  strokeTaper(c, pts, w0, w1, prog, '#8a6538');
+  strokeTaper(c, pts.map(p => [p[0] - .5, p[1] - .7]), w0 * .35, w1 * .3, prog, 'rgba(214,180,120,.75)');
+}
+function drawRoots(c, t) {
+  c.lineCap = 'round'; c.lineJoin = 'round';
+  T.forEach(a => {
+    if (!a.rooted) return;
+    const [ax, ay] = tileXY(a.id), pa = clamp((G.now - a.rootBorn) / 1.2, 0, 1);
+    // connections to rooted neighbours, one per pair
+    a.nb.forEach(n => {
+      const b = T[n]; if (n < a.id || !b.rooted) return;
+      const [bx, by] = tileXY(n), pr = clamp((G.now - Math.max(a.rootBorn, b.rootBorn)) / 1.4, 0, 1);
+      const g = rootsFor(a.id + '_' + n, a.id * 131 + n * 7 + 3, r => { const pts = rootLine(r, ax, ay, bx, by, 7, 16); return { pts, br: makeBranches(r, pts, 3, 14) }; });
+      const ws = .7 + .3 * Math.min(a.rs, b.rs); drawRoot(c, g.pts, 5 * ws, 2.2 * ws, pr, t);
+      g.br.forEach(bb => { const bp = clamp((pr - bb.at) / (1 - bb.at + .01), 0, 1); if (bp > 0) drawRoot(c, bb.pts, 1.8, .5, bp, t); });
+    });
+    // local cluster of radiating roots
+    const cl = rootsFor('c' + a.id, a.id * 977 + 11, r => {
+      const arr = [], k = 4 + ((r() * 2) | 0);
+      for (let i = 0; i < k; i++) { const ang = (i / k) * Math.PI * 2 + r() * .8, l = 16 + r() * 16, pts = rootLine(r, ax, ay, ax + Math.cos(ang) * l, ay + Math.sin(ang) * l * .7, 3, 8); arr.push({ pts, br: makeBranches(r, pts, 1, 7) }); }
+      return arr;
+    });
+    const wc = .7 + .3 * a.rs; cl.forEach(rr => { drawRoot(c, rr.pts, 3.2 * wc, .7 * wc, pa, t); rr.br.forEach(bb => { const bp = clamp((pa - bb.at) / (1 - bb.at + .01), 0, 1); if (bp > 0) drawRoot(c, bb.pts, 1.2, .4, bp, t); }); });
+    // knot with a faint living glow
+    const gl = .25 + .15 * Math.sin(t * 2 + a.id);
+    const g = c.createRadialGradient(ax, ay, 0, ax, ay, 14); g.addColorStop(0, 'rgba(190,255,140,' + gl + ')'); g.addColorStop(1, 'rgba(190,255,140,0)');
+    c.fillStyle = g; c.beginPath(); c.arc(ax, ay, 14, 0, Math.PI * 2); c.fill();
+    c.fillStyle = '#6b4a26'; c.beginPath(); c.ellipse(ax, ay, 5 * pa + 1, 3.5 * pa + 1, 0, 0, Math.PI * 2); c.fill();
+    for (let k = 0; k < a.rs; k++) { c.fillStyle = '#e8c88a'; c.beginPath(); c.arc(ax - (a.rs - 1) * 2.6 + k * 5.2, ay + 7, 1.8, 0, Math.PI * 2); c.fill(); }
+  });
+}
+
+// ---------- drawing: below the fog ----------
+function drawUnder(t, dt) {
+  const c = mainCtx;
+  drawRoots(c, t);
+  // rot ooze spots spread across rotten tiles
+  T.forEach(tt => {
+    if (tt.b <= 0 || tt.state === 0) return;
+    const sp = rootsFor('rot' + tt.id, tt.id * 53 + 5, r => { const a = []; for (let k = 0; k < 12; k++) { const s = tt.samp[(r() * tt.samp.length) | 0]; if (s) a.push([s[0], s[1], 2 + r() * 3, r() * 6]); } return a; });
+    const k = Math.min(sp.length, tt.b * 4);
+    for (let i = 0; i < k; i++) {
+      const [x, y, s, ph] = sp[i], p = 1 + .15 * Math.sin(t * 2 + ph);
+      const g = c.createRadialGradient(x, y, 0, x, y, s * 2.6 * p); g.addColorStop(0, 'rgba(80,255,60,.45)'); g.addColorStop(1, 'rgba(40,120,30,0)');
+      c.fillStyle = g; c.beginPath(); c.arc(x, y, s * 2.6 * p, 0, Math.PI * 2); c.fill();
+      c.fillStyle = 'rgba(22,48,20,.85)'; c.beginPath(); c.ellipse(x, y, s * p, s * .55 * p, 0, 0, Math.PI * 2); c.fill();
+    }
+  });
+  // selection and growth candidates
+  if (G.sel >= 0 && G.phase === 'ebb') dots(c, T[G.sel], 'rgba(255,250,230,.95)', 2.4);
+}
+
+// ---------- drawing: above the fog ----------
+function drawOver(t, dt) {
+  const c = mainCtx;
+  // nest landmark
+  if (G.nest >= 0 && T[G.nest].state > 0 && T[G.nest].source === 'nest') drawNest(c, ...tileXY(G.nest), t);
+  // banyan landmark + wish marker
+  if (T[G.banyan].state > 0) {
+    const [x, y] = tileXY(G.banyan); drawBanyan(c, x, y, t, G.friends.banyan);
+    if (!G.friends.banyan) {
+      const p = .5 + .5 * Math.sin(t * 3);
+      c.strokeStyle = 'rgba(255,240,170,' + (.35 + .45 * p) + ')'; c.lineWidth = 2.2; c.beginPath(); c.ellipse(x, y + 2, 22 + p * 4, 9 + p * 1.6, 0, 0, Math.PI * 2); c.stroke();
+      drawWish(c, x, y - 46 - p * 3, t);
+    } else {   // level plate, like a city size in Civ
+      c.fillStyle = 'rgba(30,22,12,.92)'; c.beginPath(); c.arc(x + 22, y - 30, 11, 0, Math.PI * 2); c.fill();
+      c.strokeStyle = '#e8c88a'; c.lineWidth = 2; c.stroke();
+      c.fillStyle = '#ffe9b8'; c.font = "600 15px 'Fredoka',system-ui"; c.textAlign = 'center'; c.fillText(G.blevel, x + 22, y - 25);
+    }
+  }
+  // content icons on known tiles, hints on scouted tiles
+  T.forEach(tt => {
+    if (tt.state === 0) return;
+    const [x, y] = tileXY(tt.id);
+    if (tt.state === 1) {
+      if (tt.content && tt.content.kind === 'banyan') return;
+      const icon = tt.content ? tt.content.icon || '•' : tt.b ? '☠' : ''; if (!icon) return;
+      c.font = '18px serif'; c.textAlign = 'center'; c.globalAlpha = .8 + .2 * Math.sin(t * 2 + tt.id); c.fillText(icon, x, y + 6); c.globalAlpha = 1; return;
+    }
+    if (!tt.content || !tt.content.icon || tt.content.kind === 'banyan') return;
+    if (tt.content.kind === 'gecko' && G.friends.gecko) return;
+    c.font = '15px serif'; c.textAlign = 'center'; c.fillText(tt.content.icon, x + 16, y - 8);
+  });
+  // rot pips
+  T.forEach(tt => {
+    if (tt.b <= 0 || tt.state === 0 || tt.reg === 5) return;
+    const [x, y] = tileXY(tt.id), bx = x - 18, by = y + 14;
+    c.fillStyle = 'rgba(12,30,14,.82)'; roundRect(c, bx, by, 36, 12, 6); c.fill();
+    for (let k = 0; k < 3; k++) {
+      const px = bx + 8 + k * 10, py = by + 6;
+      if (k < tt.b) { const g = c.createRadialGradient(px, py, 0, px, py, 6); g.addColorStop(0, 'rgba(120,255,80,.9)'); g.addColorStop(1, 'rgba(120,255,80,0)'); c.fillStyle = g; c.fillRect(px - 6, py - 6, 12, 12); c.fillStyle = '#7dff4f'; }
+      else c.fillStyle = 'rgba(255,255,255,.18)';
+      c.beginPath(); c.arc(px, py, 3, 0, Math.PI * 2); c.fill();
+    }
+  });
+  // threat arrows with attack/defence badges
+  const pulse = .55 + .4 * Math.sin(t * 4);
+  G.targets.forEach(id => {
+    const inf = G.tinfo[id] || {}, tt = T[id], [x, y] = tileXY(id);
+    if (tt.state === 0) return;   // strikes under the clouds stay hidden
+    dots(c, tt, G.flash === id ? 'rgba(255,90,60,.95)' : 'rgba(120,255,90,' + pulse * .8 + ')', G.flash === id ? 3 : 2.2);
+    if (inf.from >= 0) drawTendril(c, ...tileXY(inf.from), x, y - 4, t, inf.overflow, id);
+    const a = attackOn(tt), d = defense(tt), txt = '⚔' + a + '  🛡' + d, bad = a > d;
+    c.font = "600 15px 'Fredoka',system-ui"; c.textAlign = 'center'; const w = c.measureText(txt).width + 14;
+    c.fillStyle = 'rgba(8,12,8,.92)'; roundRect(c, x - w / 2, y - 42, w, 20, 10); c.fill();
+    c.strokeStyle = bad ? '#ff4a3a' : 'rgba(125,255,79,.6)'; c.lineWidth = bad ? 2 : 1; c.stroke();
+    c.fillStyle = bad ? '#ff8a7a' : '#7dff4f'; c.fillText(txt, x, y - 27);
+  });
+  // tortoise on crab beach
+  const [tx, ty] = tileXY(G.start); drawTortoiseMini(c, tx + 26, ty + 4, t, G.talk.tortoise > G.now);
+  // group (Crusoe + briefcase + kitten)
+  const gp = G.group; if (gp.t < 1) { gp.t = Math.min(1, gp.t + dt / .6); const e = 1 - Math.pow(1 - gp.t, 3); gp.x = lerp(gp.fx, gp.tx, e); gp.y = lerp(gp.fy, gp.ty, e); }
+  drawCrusoeMini(c, gp.x - 4, gp.y, t, gp.t < 1, G.talk.briefcase > G.now);
+  if (G.cat) drawCatMini(c, G.cat.x, G.cat.y, t, true, G.cat.dir);
+  else drawCatMini(c, gp.x + 9, gp.y + 2, t, false, 1);
+  // floating texts
+  c.textAlign = 'center'; c.font = "600 21px 'Fredoka',system-ui"; c.lineJoin = 'round';
+  G.floats.forEach(f => { f.t += dt; const a = Math.max(0, 1 - f.t / 2.2), y = f.y - 18 - f.t * 14; c.globalAlpha = a; c.strokeStyle = 'rgba(15,30,25,.8)'; c.lineWidth = 4; c.strokeText(f.txt, f.x, y); c.fillStyle = f.col; c.fillText(f.txt, f.x, y); });
+  c.globalAlpha = 1; G.floats = G.floats.filter(f => f.t < 2.2);
+}
+// rot tendril: black, oily, creeping from the source to the target with green glints and a puddle at the tip
+function drawTendril(c, fx, fy, x, y, t, overflow, seed) {
+  const n = 22, dx = x - fx, dy = y - fy, L = Math.hypot(dx, dy) || 1, nx = -dy / L, ny = dx / L, pts = [];
+  const ph = seed * 1.7, amp = Math.min(14, L * .12);
+  for (let i = 0; i <= n; i++) {
+    const u = i / n, env = Math.sin(u * Math.PI), o = (Math.sin(u * 7 + ph - t * 1.6) * amp * .55 + Math.sin(u * 2.3 + ph) * amp) * env;
+    pts.push([fx + dx * u + nx * o, fy + dy * u + ny * o - env * L * .12]);
+  }
+  const w0 = overflow ? 4 : 8, w1 = overflow ? 1.2 : 2.2;
+  c.lineCap = 'round';
+  strokeTaper(c, pts, w0 + 2.5, w1 + 2, 1, 'rgba(70,255,50,.18)');
+  strokeTaper(c, pts, w0, w1, 1, '#0a0d0a');
+  strokeTaper(c, pts.map(p => [p[0] - .6, p[1] - .8]), w0 * .25, w1 * .2, 1, 'rgba(120,255,90,.35)');
+  // knobbly side growths
+  for (let k = 3; k < n - 2; k += 4) { const [px, py] = pts[k], s = (k % 8 ? 1 : -1); c.fillStyle = '#0a0d0a'; c.beginPath(); c.ellipse(px + nx * s * w0 * .5, py + ny * s * w0 * .5, w0 * .35, w0 * .22, Math.atan2(ny, nx), 0, Math.PI * 2); c.fill(); }
+  // glints travelling toward the target
+  for (let k = 0; k < 3; k++) {
+    const u = ((t * .35 + k / 3 + seed * .13) % 1), i = Math.floor(u * n), [px, py] = pts[i];
+    const g = c.createRadialGradient(px, py, 0, px, py, 5); g.addColorStop(0, 'rgba(140,255,90,.9)'); g.addColorStop(1, 'rgba(140,255,90,0)');
+    c.fillStyle = g; c.fillRect(px - 5, py - 5, 10, 10);
+  }
+  // drips under an overflow tendril
+  if (overflow) for (let k = 0; k < 3; k++) { const i = 5 + k * 6, [px, py] = pts[i], q = (t * .8 + k * .33) % 1; c.globalAlpha = 1 - q; c.fillStyle = '#0a0d0a'; c.beginPath(); c.ellipse(px, py + 3 + q * 12, 1.6, 2.2, 0, 0, Math.PI * 2); c.fill(); c.globalAlpha = 1; }
+  // puddle at the tip
+  const p = 1 + .1 * Math.sin(t * 3 + seed);
+  c.fillStyle = '#0a0d0a'; c.beginPath(); c.ellipse(x, y + 2, 9 * p, 4 * p, 0, 0, Math.PI * 2); c.fill();
+  c.fillStyle = 'rgba(125,255,79,.55)'; c.beginPath(); c.ellipse(x - 2.5, y + 1, 2.5, 1, 0, 0, Math.PI * 2); c.fill();
+}
+function roundRect(c, x, y, w, h, r) { c.beginPath(); c.moveTo(x + r, y); c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r); c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath(); }
+function dots(c, t, col, s) { c.fillStyle = col; for (const [x, y] of t.border) c.fillRect(x - s / 2, y - s / 2, s, s); }
+function drawNest(c, x, y, t) {
+  const p = .5 + .5 * Math.sin(t * 2.2);
+  const g = c.createRadialGradient(x, y, 0, x, y, 40); g.addColorStop(0, 'rgba(90,255,50,' + (.35 + .2 * p) + ')'); g.addColorStop(1, 'rgba(90,255,50,0)');
+  c.fillStyle = g; c.beginPath(); c.arc(x, y, 40, 0, Math.PI * 2); c.fill();
+  c.fillStyle = '#15301a'; c.beginPath(); c.ellipse(x, y, 20, 8, 0, 0, Math.PI * 2); c.fill();
+  c.fillStyle = 'rgba(60,200,50,.85)'; c.beginPath(); c.ellipse(x, y - 1, 15, 5.5, 0, 0, Math.PI * 2); c.fill();
+  c.strokeStyle = 'rgba(140,255,90,.7)'; c.lineWidth = 1.5; c.beginPath(); c.ellipse(x, y, 20, 8, 0, 0, Math.PI * 2); c.stroke();
+  for (let k = 0; k < 5; k++) {   // rising bubbles that pop
+    const q = (t * .6 + k / 5) % 1, bx = x - 10 + k * 5 + Math.sin(t * 3 + k) * 1.5, by = y - 2 - q * 18, r = 1.2 + q * 2.4;
+    c.globalAlpha = 1 - q; c.strokeStyle = '#a8ff7a'; c.lineWidth = 1; c.beginPath(); c.arc(bx, by, r, 0, Math.PI * 2); c.stroke();
+  }
+  c.globalAlpha = 1;
+  // drips toward the sea
+  c.strokeStyle = 'rgba(70,220,50,.6)'; c.lineWidth = 2;
+  for (let k = 0; k < 3; k++) { const dx = x - 12 + k * 12, l = 6 + 4 * Math.sin(t * 1.5 + k * 2); c.beginPath(); c.moveTo(dx, y + 5); c.lineTo(dx + 1, y + 5 + l); c.stroke(); }
+  c.font = "600 13px 'Fredoka',system-ui"; c.textAlign = 'center'; c.fillStyle = 'rgba(190,255,160,.95)'; c.fillText('NEST', x, y + 30);
+}
+function drawBanyan(c, x, y, t, friend) {
+  const sway = Math.sin(t * 1.1) * .8;
+  c.fillStyle = 'rgba(0,0,0,.25)'; c.beginPath(); c.ellipse(x, y + 1, 18, 5, 0, 0, Math.PI * 2); c.fill();
+  // aerial roots
+  c.strokeStyle = '#6b4a26'; c.lineWidth = 1.4;
+  for (let k = -3; k <= 3; k++) { c.beginPath(); c.moveTo(x + k * 4.5 + sway, y - 22); c.quadraticCurveTo(x + k * 5, y - 10, x + k * 5.5, y); c.stroke(); }
+  c.fillStyle = '#5a3d1e'; c.beginPath(); c.moveTo(x - 4, y); c.lineTo(x - 2, y - 24); c.lineTo(x + 2, y - 24); c.lineTo(x + 4, y); c.fill();
+  // canopy
+  const greens = friend ? ['#2f7a2a', '#3f9a36', '#5cbf45'] : ['#2b6a2a', '#3a8634', '#4fa640'];
+  [[-12, -28, 12, 7], [11, -28, 12, 7], [0, -34, 15, 8], [-6, -38, 9, 5], [7, -38, 9, 5]].forEach(([dx, dy, rx, ry], i) => {
+    c.fillStyle = greens[i % 3]; c.beginPath(); c.ellipse(x + dx + sway, y + dy, rx, ry, 0, 0, Math.PI * 2); c.fill();
+  });
+  c.fillStyle = 'rgba(200,255,160,.35)'; c.beginPath(); c.ellipse(x - 2 + sway, y - 38, 7, 3, 0, 0, Math.PI * 2); c.fill();
+}
+function drawWish(c, x, y, t) {
+  c.fillStyle = 'rgba(255,246,227,.95)'; roundRect(c, x - 15, y - 13, 30, 24, 10); c.fill();
+  c.beginPath(); c.moveTo(x - 4, y + 10); c.lineTo(x, y + 17); c.lineTo(x + 4, y + 10); c.fill();
+  c.font = '15px serif'; c.textAlign = 'center'; c.fillText('✨', x, y + 4);
+}
+function drawCrusoeMini(c, x, y, t, walking, caseTalk) {
+  const bob = walking ? Math.sin(t * 16) * 1.2 : 0, sw = walking ? Math.sin(t * 16) * 2 : 0;
+  c.fillStyle = 'rgba(0,0,0,.25)'; c.beginPath(); c.ellipse(x, y + 1, 6, 2, 0, 0, Math.PI * 2); c.fill();
+  c.strokeStyle = '#5d6470'; c.lineWidth = 2.4; c.lineCap = 'round';
+  c.beginPath(); c.moveTo(x - 1.5, y - 8); c.lineTo(x - 1.5 - sw, y); c.moveTo(x + 1.5, y - 8); c.lineTo(x + 1.5 + sw, y); c.stroke();
+  c.fillStyle = '#f4f1ea'; c.fillRect(x - 4, y - 17 + bob, 8, 10);
+  c.fillStyle = G.wandel >= 5 ? '#5a8a3a' : '#8e2a2a'; c.fillRect(x - .7, y - 17 + bob, 1.6, 6);
+  c.fillStyle = '#d9a27a'; c.beginPath(); c.arc(x, y - 20.5 + bob, 3.6, 0, Math.PI * 2); c.fill();
+  c.fillStyle = '#4a3324'; c.beginPath(); c.ellipse(x, y - 23 + bob, 3.8, 1.8, 0, Math.PI, 0); c.fill();
+  if (G.wandel >= 10) { c.fillStyle = '#7ec850'; c.beginPath(); c.ellipse(x + 3, y - 24 + bob, 2.4, 1.1, .5, 0, Math.PI * 2); c.fill(); }
+  // the briefcase — it talks; when it does, its lid flaps
+  const lid = caseTalk ? Math.abs(Math.sin(t * 14)) * 2.2 : 0, bx = x + 4, by = y - 14 + bob;
+  c.fillStyle = '#2b2b2b'; c.fillRect(bx, by, 6, 4.5); c.fillStyle = '#39e639'; c.fillRect(bx, by + 3, 6, .9);
+  c.fillStyle = '#3a3a3a'; c.save(); c.translate(bx, by); c.rotate(-lid * .25); c.fillRect(0, -1.2, 6, 1.4); c.restore();
+  c.strokeStyle = '#2b2b2b'; c.lineWidth = .8; c.beginPath(); c.arc(bx + 3, by - .4, 1.3, Math.PI, 0); c.stroke();
+}
+function drawCatMini(c, x, y, t, running, dir) {
+  const k = running ? Math.sin(t * 22) * 1.2 : 0;
+  c.save(); c.translate(x, y); c.scale(dir || 1, 1); c.translate(-x, -y);
+  c.fillStyle = 'rgba(0,0,0,.22)'; c.beginPath(); c.ellipse(x, y + 1, 4, 1.4, 0, 0, Math.PI * 2); c.fill();
+  c.fillStyle = '#f2994a'; c.beginPath(); c.ellipse(x, y - 3 + k * .3, 4, 2.4, 0, 0, Math.PI * 2); c.fill();
+  c.beginPath(); c.arc(x + 4, y - 5.5, 2.2, 0, Math.PI * 2); c.fill();
+  c.beginPath(); c.moveTo(x + 2.6, y - 7); c.lineTo(x + 3.1, y - 9.2); c.lineTo(x + 4.2, y - 7.4); c.fill(); c.beginPath(); c.moveTo(x + 4.6, y - 7.4); c.lineTo(x + 5.6, y - 9.2); c.lineTo(x + 6, y - 6.8); c.fill();
+  c.strokeStyle = '#e07b2e'; c.lineWidth = 1.2; c.beginPath(); c.moveTo(x - 4, y - 3); c.quadraticCurveTo(x - 7, y - 5 + k, x - 6, y - 8); c.stroke();
+  if (running) { c.strokeStyle = '#d9822f'; c.lineWidth = 1; c.beginPath(); c.moveTo(x - 2, y - 1); c.lineTo(x - 2 - k, y + 1); c.moveTo(x + 2, y - 1); c.lineTo(x + 2 + k, y + 1); c.stroke(); }
+  c.restore();
+}
+function drawTortoiseMini(c, x, y, t, talk) {
+  const head = talk ? Math.sin(t * 10) * .8 : 0;
+  c.fillStyle = 'rgba(0,0,0,.22)'; c.beginPath(); c.ellipse(x, y + 1, 8, 2.4, 0, 0, Math.PI * 2); c.fill();
+  c.fillStyle = '#9aa565'; c.beginPath(); c.ellipse(x - 7.5, y - 3 + Math.sin(t * .9) * .4 + head, 2.4, 1.9, 0, 0, Math.PI * 2); c.fill();
+  c.fillStyle = '#6f7d3c'; c.beginPath(); c.ellipse(x, y - 2, 6.5, 4.6, 0, Math.PI, 0); c.fill();
+  c.fillStyle = '#58652d'; c.fillRect(x - 6.5, y - 2.4, 13, 1.2);
+}
+function SFXmeow() {}
+
+// ---------- frame ----------
+let lastT = 0;
+function frame(ms) {
+  const t = ms / 1000, dt = Math.min(.05, lastT ? t - lastT : .016); lastT = t; G.now = t;
+  updateCat(dt);
+  if (G.stateDirty) composeState();
+  if (G.fogDirty || G.knownDirty) composeFog();
+  mainCtx.setTransform(1, 0, 0, 1, 0, 0);
+  mainCtx.drawImage(base.c, 0, 0);
+  if (showTiles) mainCtx.drawImage(borders.c, 0, 0);
+  mainCtx.setTransform(K, 0, 0, K, 0, 0);
+  drawAnim(t);
+  mainCtx.setTransform(1, 0, 0, 1, 0, 0);
+  mainCtx.drawImage(stateLayer.c, 0, 0);
+  mainCtx.setTransform(K, 0, 0, K, 0, 0);
+  drawUnder(t, dt);
+  mainCtx.globalAlpha = .93; mainCtx.drawImage(FOG.out.c, 0, 0, CW, CH); mainCtx.globalAlpha = 1;
+  drawOver(t, dt);
+  vignette(mainCtx);
+  requestAnimationFrame(frame);
+}
+
+// ---------- build (with a loading screen) ----------
+const lbar = document.getElementById('lbar');
+const step = (p, fn) => new Promise(res => setTimeout(() => { fn(); lbar.style.width = p + '%'; res(); }, 20));
+async function build() {
+  const t0 = performance.now();
+  initNoise();
+  await step(35, buildTerrain);
+  await step(55, buildTiles);
+  await step(80, renderBase);
+  await step(90, renderBorders);
+  await step(100, () => { buildGame(); composeState(); composeFog(); });
+  document.getElementById('info').firstChild.textContent = 'built in ' + Math.round(performance.now() - t0) + ' ms · ' + seeds.length + ' tiles · ';
+  const ld = document.getElementById('loading'); ld.style.opacity = 0; setTimeout(() => ld.remove(), 700);
+  updateHUD(); banner('Low tide · Tide 1');
+  setTimeout(() => {
+    say1('intro', 'tortoise', 'Another one. Washed up in a tie. Lovely. Tap a tile next to you to walk — the cat sniffs ahead for free. Let her.');
+    say1('opening', 'briefcase', 'Opening balance: one accountant, one cat, eight units of tide. Spend wisely. And keep me dry.');
+  }, 1200);
+  requestAnimationFrame(frame);
+}
+document.getElementById('bTiles').onclick = e => { showTiles = !showTiles; e.target.textContent = 'Tile borders: ' + (showTiles ? 'on' : 'off'); };
+build();
+</script>
+</body>
+</html>
